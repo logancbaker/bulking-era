@@ -985,35 +985,67 @@ Rules for every case:
 
   // ---------- describe by voice or text ----------
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let rec = null, recBase = '';
+  const SILENCE_MS = 3000;  // stop after this long with no new words
+  let rec = null, recBase = '', wantListening = false, silenceTimer = null;
   function setMic(listening, label) {
     $('#micBtn').classList.toggle('listening', listening);
-    $('#micLabel').textContent = label ?? (listening ? 'Listening… tap to stop' : 'Tap to talk');
+    $('#micLabel').textContent = label ?? (listening ? 'Listening… tap the mic when you\'re done' : 'Tap to talk');
   }
-  function stopListening() { if (rec) { try { rec.stop(); } catch {} } }
-  function startListening() {
+  function armSilence() {
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => { if (wantListening) stopListening(); }, SILENCE_MS);
+  }
+  function stopListening() {
+    wantListening = false; clearTimeout(silenceTimer);
+    if (rec) { try { rec.stop(); } catch {} }
+  }
+  // Joins one session's results. iOS sometimes repeats earlier words inside later results, so skip text already said.
+  function joinResults(results) {
+    let said = '';
+    for (let i = 0; i < results.length; i++) {
+      const t = results[i][0].transcript.trim(), lo = said.toLowerCase(), tl = t.toLowerCase();
+      if (!t || lo.endsWith(tl)) continue;
+      said = said && tl.startsWith(lo) ? t : (said + ' ' + t).trim();
+    }
+    return said;
+  }
+  function startListening(isRestart = false) {
     if (!SpeechRec) return false;
     try {
-      rec = new SpeechRec();
-      rec.lang = navigator.language || 'en-US';
-      rec.interimResults = true;
-      rec.continuous = false;  // iOS repeats phrases in continuous mode; one utterance is plenty here
+      const r = new SpeechRec();
+      r.lang = navigator.language || 'en-US';
+      r.interimResults = true;
+      r.continuous = true;
       recBase = $('#describeText').value.trim();
-      rec.onresult = e => {
-        let said = '';
-        for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript;
-        $('#describeText').value = (recBase ? recBase + ' ' : '') + said.trim();
+      r.onresult = e => {
+        const said = joinResults(e.results);
+        $('#describeText').value = (recBase ? recBase + ' ' : '') + said;
+        armSilence();
       };
-      rec.onerror = e => {
-        rec = null;
+      r.onerror = e => {
+        if (e.error === 'no-speech' || e.error === 'aborted') return;  // onend decides whether to keep going
+        const wasRestart = isRestart;
+        wantListening = false; rec = null; clearTimeout(silenceTimer);
         const blocked = e.error === 'not-allowed' || e.error === 'service-not-allowed';
-        setMic(false, blocked ? 'Voice isn\'t available here. Tap the box and use 🎤 on the keyboard.' : e.error === 'no-speech' ? "Didn't hear anything. Tap to try again." : 'Tap to talk');
+        setMic(false, blocked && !wasRestart ? 'Voice isn\'t available here. Tap the box and use 🎤 on the keyboard.' : 'Tap to keep talking');
       };
-      rec.onend = () => { if (rec) { rec = null; setMic(false); } };
-      rec.start();
+      r.onend = () => {
+        if (rec !== r) return;
+        rec = null;
+        // The phone ends a listening session on its own at pauses; quietly start a new one until she's done.
+        if (wantListening && startListening(true)) return;
+        wantListening = false; clearTimeout(silenceTimer); setMic(false);
+      };
+      r.start();
+      rec = r; wantListening = true;
+      if (!isRestart) armSilence();
       setMic(true);
       return true;
-    } catch { rec = null; setMic(false, 'Tap the box and use 🎤 on the keyboard.'); return false; }
+    } catch {
+      rec = null; wantListening = false; clearTimeout(silenceTimer);
+      setMic(false, isRestart ? 'Tap to keep talking' : 'Tap the box and use 🎤 on the keyboard.');
+      return false;
+    }
   }
   $('#speakBtn').onclick = () => {
     if (!settings.apiKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
