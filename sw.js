@@ -1,6 +1,6 @@
 // Caches the app shell so it opens instantly and works offline.
 // Bump VERSION whenever you upload changed files.
-const VERSION = 'bulking-era-v16';
+const VERSION = 'bulking-era-v18';
 const SHELL = ['icons/hero.jpg', 'icons/avatar.jpg', './', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

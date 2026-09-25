@@ -257,6 +257,13 @@
   .w-row { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 6px; font-variant-numeric: tabular-nums; text-align: left; }
   .w-row span { color: var(--muted); font-size: 14px; }
   .w-row b small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
+  .chips { flex-wrap: wrap; }
+  .pct-wrap { position: relative; }
+  .pct-wrap input { padding-right: 30px; text-align: center; font-variant-numeric: tabular-nums; }
+  .pct-wrap i { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-style: normal; color: var(--muted); pointer-events: none; }
+  .macro-pct .grams { display: block; text-align: center; margin-top: 6px; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .goal-ok { color: var(--accent); font-weight: 600; }
+  .goal-bad { color: var(--danger); font-weight: 600; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -403,10 +410,17 @@
 
     <div class="section-title">Daily goals</div>
     <label class="field"><span>Calories</span><input type="number" inputmode="numeric" id="goalCal"></label>
+    <div class="field" style="margin-bottom:6px"><span style="display:block;font-size:13px;color:var(--muted);margin-bottom:6px;font-weight:500">Macro split (% of calories)</span>
+      <div class="chips" id="macroPresets">
+        <button type="button" data-split="30,40,30">Balanced 30/40/30</button>
+        <button type="button" data-split="30,45,25">Bulk 30/45/25</button>
+        <button type="button" data-split="35,40,25">High protein 35/40/25</button>
+        <button type="button" data-split="25,50,25">High carb 25/50/25</button>
+      </div></div>
     <div class="row">
-      <label class="field"><span><i class="dot" style="background:var(--protein)"></i>Protein (g)</span><input type="number" inputmode="numeric" id="goalP"></label>
-      <label class="field"><span><i class="dot" style="background:var(--carbs)"></i>Carbs (g)</span><input type="number" inputmode="numeric" id="goalC"></label>
-      <label class="field"><span><i class="dot" style="background:var(--fat)"></i>Fat (g)</span><input type="number" inputmode="numeric" id="goalF"></label>
+      <label class="field macro-pct"><span><i class="dot" style="background:var(--protein)"></i>Protein</span><div class="pct-wrap"><input type="number" inputmode="decimal" id="pctP"><i>%</i></div><b class="grams" id="gP"></b></label>
+      <label class="field macro-pct"><span><i class="dot" style="background:var(--carbs)"></i>Carbs</span><div class="pct-wrap"><input type="number" inputmode="decimal" id="pctC"><i>%</i></div><b class="grams" id="gC"></b></label>
+      <label class="field macro-pct"><span><i class="dot" style="background:var(--fat)"></i>Fat</span><div class="pct-wrap"><input type="number" inputmode="decimal" id="pctF"><i>%</i></div><b class="grams" id="gF"></b></label>
     </div>
     <p class="hint" id="goalHint"></p>
     <label class="field"><span id="goalWeightLabel">Goal weight (lb)</span><input type="number" inputmode="decimal" step="0.1" id="goalWeight" placeholder="Optional"></label>
@@ -1334,20 +1348,47 @@ Rules for every case:
   $('#foodSheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) photo = null; });
 
   // ---------- settings ----------
-  function goalHint() {
-    const g = settings.goals, fromMacros = g.protein * 4 + g.carbs * 4 + g.fat * 9;
-    $('#goalHint').textContent = `Your macro goals add up to ${fromMacros.toLocaleString()} cal.`;
+  // Macro goals come from calories × each macro's %: protein and carbs have 4 cal/g, fat has 9 cal/g.
+  function splitFromGrams() {
+    const g = settings.goals, pc = g.protein * 4, cc = g.carbs * 4, fc = g.fat * 9, tot = pc + cc + fc;
+    if (!tot) return { protein: 30, carbs: 40, fat: 30 };
+    const p = Math.round(pc / tot * 100), c = Math.round(cc / tot * 100);
+    return { protein: p, carbs: c, fat: 100 - p - c };
+  }
+  const gramsFor = (cal, pct) => ({ protein: r0(cal * pct.protein / 100 / 4), carbs: r0(cal * pct.carbs / 100 / 4), fat: r0(cal * pct.fat / 100 / 9) });
+  const readSplit = () => ({ protein: num($('#pctP').value), carbs: num($('#pctC').value), fat: num($('#pctF').value) });
+  function showMacroGoals(g, total) {
+    $('#gP').textContent = `${g.protein} g`; $('#gC').textContent = `${g.carbs} g`; $('#gF').textContent = `${g.fat} g`;
+    $('#goalHint').innerHTML = Math.abs(total - 100) < 0.01
+      ? '<span class="goal-ok">✓ Adds up to 100%</span>'
+      : `<span class="goal-bad">Adds up to ${r1(total)}% — change it to 100% to update your macro goals</span>`;
+    document.querySelectorAll('#macroPresets button').forEach(b => {
+      const [p, c, f] = b.dataset.split.split(',').map(Number), cur = readSplit();
+      b.classList.toggle('on', p === cur.protein && c === cur.carbs && f === cur.fat);
+    });
+  }
+  // Called whenever calories or a % changes. Grams only update (and save) once the split totals exactly 100%.
+  function applyMacroSplit() {
+    const cal = Math.max(0, r0(num($('#goalCal').value))), pct = readSplit(), total = pct.protein + pct.carbs + pct.fat;
+    settings.goals.calories = cal;
+    const g = gramsFor(cal, pct);
+    if (Math.abs(total - 100) < 0.01) { settings.macroPct = pct; Object.assign(settings.goals, g); }
+    saveSettings(); render();
+    showMacroGoals(g, total);
   }
   function openSettings() {
-    $('#goalCal').value = settings.goals.calories; $('#goalP').value = settings.goals.protein;
-    $('#goalC').value = settings.goals.carbs; $('#goalF').value = settings.goals.fat;
+    const split = settings.macroPct || splitFromGrams();
+    $('#goalCal').value = settings.goals.calories;
+    $('#pctP').value = split.protein; $('#pctC').value = split.carbs; $('#pctF').value = split.fat;
     $('#modelInfo').textContent = settings.lastModel ? `Last photo or description was analyzed by ${settings.lastModel}.` : '';
     $('#apiKey').value = settings.apiKey; $('#modelName').value = settings.model;
     $('#weekStart').value = String(settings.weekStart);
     $('#goalWeightLabel').textContent = `Goal weight (${wUnit()})`;
     $('#goalWeight').value = settings.goalWeightLb ? fmtW(settings.goalWeightLb) : '';
     document.querySelectorAll('#unitSetting button').forEach(b => b.classList.toggle('on', b.dataset.unit === wUnit()));
-    goalHint(); openSheet($('#settingsSheet'));
+    showMacroGoals(settings.goals, split.protein + split.carbs + split.fat);
+    if (!settings.macroPct) $('#goalHint').textContent = `These are your current goals (about ${split.protein}/${split.carbs}/${split.fat}). Change calories, a %, or tap a preset to recalculate the grams.`;
+    openSheet($('#settingsSheet'));
   }
   $('#openSettings').onclick = openSettings;
   $('#setupGo').onclick = openSettings;
@@ -1363,9 +1404,13 @@ Rules for every case:
     settings.goalWeightLb = v > 0 ? Math.round(fromDisp(v) * 100) / 100 : null;
     saveSettings();
   });
-  [['#goalCal', 'calories'], ['#goalP', 'protein'], ['#goalC', 'carbs'], ['#goalF', 'fat']].forEach(([sel, k]) => {
-    $(sel).addEventListener('input', e => { settings.goals[k] = Math.max(0, r0(num(e.target.value))); saveSettings(); goalHint(); render(); });
-  });
+  ['#goalCal', '#pctP', '#pctC', '#pctF'].forEach(sel => $(sel).addEventListener('input', applyMacroSplit));
+  $('#macroPresets').onclick = e => {
+    const b = e.target.closest('[data-split]'); if (!b) return;
+    const [p, c, f] = b.dataset.split.split(',');
+    $('#pctP').value = p; $('#pctC').value = c; $('#pctF').value = f;
+    applyMacroSplit();
+  };
   $('#apiKey').addEventListener('input', e => { settings.apiKey = e.target.value.trim(); saveSettings(); render(); });
   $('#weekStart').addEventListener('change', e => { settings.weekStart = +e.target.value; saveSettings(); render(); });
   $('#modelName').addEventListener('input', e => { settings.model = e.target.value.trim(); saveSettings(); });
@@ -1378,7 +1423,7 @@ Rules for every case:
   };
 
   $('#exportBtn').onclick = async () => {
-    const data = JSON.stringify({ app: 'Bulking Era', version: 1, exported: new Date().toISOString(), goals: settings.goals, goalWeightLb: settings.goalWeightLb || null, entries, favorites, weights });
+    const data = JSON.stringify({ app: 'Bulking Era', version: 1, exported: new Date().toISOString(), goals: settings.goals, macroPct: settings.macroPct || null, goalWeightLb: settings.goalWeightLb || null, entries, favorites, weights });
     const name = `bulking-era-backup-${dateKey(new Date())}.json`;
     const file = new File([data], name, { type: 'application/json' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -1406,6 +1451,7 @@ Rules for every case:
         const haveFav = new Set(favorites.map(x => x.id));
         favorites.push(...data.favorites.filter(x => x && x.id && !haveFav.has(x.id))); saveFavorites();
       }
+      if (data.macroPct && num(data.macroPct.protein) + num(data.macroPct.carbs) + num(data.macroPct.fat) === 100) settings.macroPct = data.macroPct;
       if (data.goals) { settings.goals = Object.assign({}, DEFAULT_GOALS, data.goals); saveSettings(); }
       saveEntries(); render(); openSettings(); toast('Backup restored');
     } catch { toast("That doesn't look like a Bulking Era backup"); }
