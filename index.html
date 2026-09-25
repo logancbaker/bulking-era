@@ -59,8 +59,11 @@
   .wrap { max-width: 560px; margin: 0 auto; padding: 0 16px; }
 
   /* Header */
-  header { display: flex; align-items: center; gap: 6px; padding: 14px 0 8px; }
-  header #openSettings { margin-left: auto; }
+  header { display: flex; align-items: center; gap: 4px; padding: 14px 0 8px; }
+  header #weightBtn { margin-left: auto; }
+  header .icon-btn { width: 36px; height: 36px; flex: none; }
+  header .datenav { min-width: 0; }
+  header .datenav h1 { font-size: 20px; margin: 0 2px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .avatar { border: 0; padding: 0; background: none; width: 48px; height: 48px; border-radius: 50%; overflow: hidden; border: 2px solid #f47a0c; flex: none; box-shadow: 0 2px 8px rgba(244,122,12,.35); }
   .avatar img { width: 100%; height: 100%; display: block; }
   .empty-hero { width: 170px; height: 170px; border-radius: 32px; display: block; margin: 0 auto 16px; box-shadow: 0 8px 24px rgba(244,122,12,.3); }
@@ -234,6 +237,26 @@
   .mic-btn.listening { background: var(--danger); animation: pulse 1.2s ease-in-out infinite; }
   @keyframes pulse { 50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--danger) 20%, transparent); } }
   .mic-label { font-size: 14px; color: var(--muted); margin-top: 8px; min-height: 20px; }
+  /* Weight */
+  #weightBtn { position: relative; }
+  #weightBtn.needs { color: var(--danger); animation: needs 1.6s ease-in-out infinite; }
+  #weightBtn.needs::after { content: ''; position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); border: 2px solid var(--bg); }
+  @keyframes needs {
+    0%, 100% { box-shadow: inset 0 0 0 2px var(--danger), 0 0 0 0 color-mix(in srgb, var(--danger) 55%, transparent); }
+    50% { box-shadow: inset 0 0 0 2px var(--danger), 0 0 0 7px color-mix(in srgb, var(--danger) 0%, transparent); }
+  }
+  .weight-entry { display: flex; gap: 10px; align-items: stretch; margin: 8px 0 4px; }
+  .weight-entry input { font-size: 34px; font-weight: 700; text-align: center; padding: 14px 10px; font-variant-numeric: tabular-nums; flex: 1; min-width: 0; }
+  .weight-entry .seg { flex-direction: column; width: 64px; flex: none; }
+  .w-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+  .w-stats div { background: var(--card); border-radius: 14px; padding: 10px 8px; text-align: center; }
+  .w-stats b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
+  .w-stats span { font-size: 12px; color: var(--muted); }
+  .w-chart-card { background: var(--card); border-radius: 16px; padding: 12px 12px 8px; }
+  .w-chart-card svg { touch-action: none; }
+  .w-row { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 6px; font-variant-numeric: tabular-nums; text-align: left; }
+  .w-row span { color: var(--muted); font-size: 14px; }
+  .w-row b small { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 6px; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -246,6 +269,8 @@
       <h1 id="dateLabel">Today</h1>
       <button class="icon-btn" id="nextDay" aria-label="Next day"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
     </div>
+    <button class="icon-btn" id="weightBtn" aria-label="Log weight"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M7.5 10a5 5 0 0 1 9 0"/><path d="M12 10l1.8-2.4"/></svg></button>
+    <button class="icon-btn" id="weightChartBtn" aria-label="Weight chart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 6-7"/></svg></button>
     <button class="icon-btn" id="openSettings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </header>
   <div class="seg" id="modeSeg" style="margin-bottom:14px"><button type="button" data-mode="day" class="on">Day</button><button type="button" data-mode="week">Week</button></div>
@@ -324,6 +349,40 @@
   </div></div>
 </div>
 
+<!-- Weight chart sheet -->
+<div class="sheet" id="weightChartSheet">
+  <div class="scrim" data-close></div>
+  <div class="panel"><div class="panel-inner">
+    <div class="grab"></div>
+    <div class="sheet-head"><h2>Weight</h2><button class="link-btn" data-close>Done</button></div>
+    <div class="chips" id="wRange"></div>
+    <div class="w-stats" id="wStats"></div>
+    <p class="hint" id="wGoal" style="margin:-4px 4px 12px"></p>
+    <div class="w-chart-card"><div class="readout" id="wReadout"></div><div id="wChart"></div></div>
+    <button class="btn primary block" type="button" id="wLogBtn" style="margin-top:14px">Log weight</button>
+    <div class="section-title" style="margin-left:4px">Weigh-ins</div>
+    <div id="wList"></div>
+  </div></div>
+</div>
+
+<!-- Weight entry sheet -->
+<div class="sheet" id="weightSheet">
+  <div class="scrim" data-close></div>
+  <div class="panel"><div class="panel-inner">
+    <div class="grab"></div>
+    <div class="sheet-head"><h2 id="weightTitle">Today's weight</h2><button class="link-btn" data-close>Cancel</button></div>
+    <div class="weight-entry">
+      <input type="number" inputmode="decimal" step="0.1" min="0" id="weightInput" placeholder="0.0" aria-label="Weight">
+      <div class="seg" id="unitSeg"><button type="button" data-unit="lb">lb</button><button type="button" data-unit="kg">kg</button></div>
+    </div>
+    <p class="hint" id="weightLast"></p>
+    <div class="actions">
+      <button class="btn primary block" type="button" id="weightSave">Save weight</button>
+      <button class="btn danger block hidden" type="button" id="weightDelete">Delete this weigh-in</button>
+    </div>
+  </div></div>
+</div>
+
 <!-- Favorites sheet -->
 <div class="sheet" id="favSheet">
   <div class="scrim" data-close></div>
@@ -350,6 +409,7 @@
       <label class="field"><span><i class="dot" style="background:var(--fat)"></i>Fat (g)</span><input type="number" inputmode="numeric" id="goalF"></label>
     </div>
     <p class="hint" id="goalHint"></p>
+    <label class="field"><span id="goalWeightLabel">Goal weight (lb)</span><input type="number" inputmode="decimal" step="0.1" id="goalWeight" placeholder="Optional"></label>
 
     <div class="section-title">Gemini API key</div>
     <div class="keywrap"><input type="password" id="apiKey" placeholder="Paste your key here" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="toggleKey" type="button">Show</button></div>
@@ -388,6 +448,10 @@
   settings.goals = Object.assign({}, DEFAULT_GOALS, settings.goals);
   let entries = store.get('ms.entries', []);
   let favorites = store.get('ms.favorites', []);
+  let weights = store.get('ms.weights', {});   // 'YYYY-MM-DD' -> pounds
+  function saveWeights() {
+    try { store.set('ms.weights', weights); } catch (e) { toast('Storage is full — save a backup and clear old data.'); }
+  }
   function saveFavorites() {
     try { store.set('ms.favorites', favorites); } catch (e) { toast('Storage is full — save a backup and clear old data.'); }
   }
@@ -443,6 +507,7 @@
 
   function render() {
     $('#setupCard').classList.toggle('hidden', !!settings.apiKey);
+    updateWeightBtn();
     $('#dayView').classList.toggle('hidden', mode !== 'day');
     $('#weekView').classList.toggle('hidden', mode !== 'week');
     if (mode === 'week') { renderWeek(); return; }
@@ -450,7 +515,7 @@
     const d = parseKey(viewDate);
     const label = viewDate === today ? 'Today'
       : viewDate === dateKey(addDays(new Date(), -1)) ? 'Yesterday'
-      : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     $('#dateLabel').textContent = label;
     $('#nextDay').disabled = viewDate >= today;
     $('#setupCard').classList.toggle('hidden', !!settings.apiKey);
@@ -547,7 +612,7 @@
     const end = addDays(parseKey(start), 6), s0 = parseKey(start);
     const range = s0.getMonth() === end.getMonth()
       ? `${s0.toLocaleDateString(undefined, { month: 'short' })} ${s0.getDate()}–${end.getDate()}`
-      : `${s0.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} – ${end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+      : `${s0.getMonth() + 1}/${s0.getDate()}–${end.getMonth() + 1}/${end.getDate()}`;
     $('#dateLabel').textContent = isCurrent ? 'This week' : start === weekStartKey(dateKey(addDays(new Date(), -7))) ? 'Last week' : range;
     $('#nextDay').disabled = isCurrent;
 
@@ -1077,6 +1142,157 @@ Rules for every case:
     const d = newDraft(); d.items = [{ name: '', portion: '', calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }];
     openFood(d);
   };
+  // ---------- weight ----------
+  const LB_PER_KG = 2.20462;
+  const wUnit = () => settings.weightUnit === 'kg' ? 'kg' : 'lb';
+  const toDisp = lb => wUnit() === 'kg' ? lb / LB_PER_KG : lb;
+  const fromDisp = v => wUnit() === 'kg' ? v * LB_PER_KG : v;
+  const fmtW = lb => toDisp(lb).toFixed(1);
+  const shortDate = k => parseKey(k).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const longDate = k => parseKey(k).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  let weightDate = null, wRange = '3M', wSel = null;
+  let wExactLb = null;  // unrounded value behind the input, so lb/kg switching doesn't drift
+
+  function updateWeightBtn() {
+    const need = !weights[dateKey(new Date())];
+    $('#weightBtn').classList.toggle('needs', need);
+    $('#weightBtn').setAttribute('aria-label', need ? "Log today's weight (not logged yet)" : 'Log weight');
+  }
+
+  function openWeight(key) {
+    const today = dateKey(new Date());
+    weightDate = !key || key > today ? today : key;
+    $('#weightTitle').textContent = weightDate === today ? "Today's weight" : `Weight · ${longDate(weightDate)}`;
+    wExactLb = weights[weightDate] || null;
+    $('#weightInput').value = wExactLb ? fmtW(wExactLb) : '';
+    const prev = Object.keys(weights).filter(k => k !== weightDate).sort().pop();
+    $('#weightInput').placeholder = prev ? fmtW(weights[prev]) : '0.0';
+    $('#weightLast').textContent = (prev ? `Last weigh-in: ${fmtW(weights[prev])} ${wUnit()} on ${longDate(prev)}` : 'Tip: weigh in at the same time each day, like first thing in the morning.')
+      + (settings.goalWeightLb ? ` · Goal: ${fmtW(settings.goalWeightLb)} ${wUnit()}` : '');
+    $('#weightDelete').classList.toggle('hidden', !weights[weightDate]);
+    document.querySelectorAll('#unitSeg button').forEach(b => b.classList.toggle('on', b.dataset.unit === wUnit()));
+    openSheet($('#weightSheet'));
+    $('#weightInput').focus();
+  }
+
+  function afterWeightChange(msg) {
+    saveWeights(); closeSheet($('#weightSheet')); updateWeightBtn(); toast(msg);
+    if ($('#weightChartSheet').classList.contains('open')) renderWeightChart();
+  }
+
+  $('#weightBtn').onclick = () => openWeight(mode === 'day' ? viewDate : null);
+  $('#wLogBtn').onclick = () => openWeight(null);
+  $('#weightSave').onclick = () => {
+    const lb = wExactLb || fromDisp(num($('#weightInput').value));
+    if (!(lb >= 50 && lb <= 800)) { toast(`Enter a weight in ${wUnit()}`); return; }
+    weights[weightDate] = Math.round(lb * 100) / 100;
+    afterWeightChange(`Saved ${fmtW(weights[weightDate])} ${wUnit()}`);
+  };
+  $('#weightInput').addEventListener('input', () => { wExactLb = null; });
+  $('#weightInput').addEventListener('keydown', e => { if (e.key === 'Enter') $('#weightSave').click(); });
+  $('#weightDelete').onclick = () => {
+    if (!confirm('Delete this weigh-in?')) return;
+    delete weights[weightDate];
+    afterWeightChange('Weigh-in deleted');
+  };
+  $('#unitSeg').onclick = e => {
+    const b = e.target.closest('[data-unit]'); if (!b || b.dataset.unit === wUnit()) return;
+    const typed = num($('#weightInput').value), lb = wExactLb || (typed ? fromDisp(typed) : 0);
+    settings.weightUnit = b.dataset.unit; saveSettings();
+    openWeight(weightDate);
+    if (lb) { wExactLb = lb; $('#weightInput').value = fmtW(lb); }
+  };
+
+  const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1Y', 365], ['All', Infinity]];
+  function renderWeightChart() {
+    const u = wUnit();
+    $('#wRange').innerHTML = RANGES.map(([r]) => `<button type="button" data-range="${r}" class="${r === wRange ? 'on' : ''}">${r}</button>`).join('');
+    const all = Object.keys(weights).sort().map(k => ({ k, t: parseKey(k).getTime(), v: toDisp(weights[k]) }));
+    const days = RANGES.find(([r]) => r === wRange)[1];
+    const cutoff = days === Infinity ? '' : dateKey(addDays(new Date(), -days));
+    const pts = all.filter(p => p.k >= cutoff);
+
+    // Stats
+    const cur = all.at(-1);
+    let change = null, perWeek = null;
+    if (pts.length > 1) {
+      change = pts.at(-1).v - pts[0].v;
+      const weeks = (pts.at(-1).t - pts[0].t) / (7 * 864e5);
+      if (weeks >= 1) perWeek = change / weeks;
+    }
+    const signed = x => x == null ? '—' : `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(1)}`;
+    // Goal progress: how far to go and, at the recent pace, roughly how long.
+    const goal = settings.goalWeightLb ? toDisp(settings.goalWeightLb) : null;
+    let goalText = '';
+    if (goal && cur) {
+      const toGo = goal - cur.v, start = all[0].v;
+      const reached = Math.abs(toGo) < 0.05 || (goal >= start ? cur.v >= goal : cur.v <= goal);
+      if (reached) goalText = `🎯 Goal of ${goal.toFixed(1)} ${u} reached! 🎉`;
+      else {
+        goalText = `🎯 Goal ${goal.toFixed(1)} ${u} · <b>${Math.abs(toGo).toFixed(1)} ${u} to ${toGo > 0 ? 'gain' : 'lose'}</b>`;
+        if (perWeek && Math.sign(perWeek) === Math.sign(toGo)) {
+          const wks = Math.ceil(Math.abs(toGo / perWeek));
+          goalText += ` · about ${wks} week${wks === 1 ? '' : 's'} at this pace`;
+        }
+      }
+    } else if (!goal) goalText = 'Set a goal weight in ⚙️ Settings to see how far you have to go.';
+    $('#wGoal').innerHTML = goalText;
+    $('#wStats').innerHTML = `
+      <div><b>${cur ? cur.v.toFixed(1) : '—'}</b><span>current (${u})</span></div>
+      <div><b>${signed(change)}</b><span>change · ${wRange === 'All' ? 'all time' : wRange}</span></div>
+      <div><b>${signed(perWeek)}</b><span>${u} per week</span></div>`;
+
+    // Chart
+    if (pts.length < 2) {
+      $('#wReadout').innerHTML = '';
+      $('#wChart').innerHTML = `<div class="empty" style="padding:28px 8px">${all.length ? 'Log a couple more weigh-ins in this range to see your trend.' : '<b>No weigh-ins yet</b>Tap Log weight to add your first one.'}</div>`;
+    } else {
+      const W = 340, H = 190, L = 38, R = 12, T = 10, B = 22;
+      const t0 = pts[0].t, t1 = pts.at(-1).t;
+      const vals = pts.map(p => p.v).concat(goal ? [goal] : []);
+      let lo = Math.min(...vals), hi = Math.max(...vals);
+      const pad = Math.max((hi - lo) * 0.15, u === 'kg' ? 0.5 : 1);
+      lo -= pad; hi += pad;
+      const X = t => L + (W - L - R) * (t - t0) / (t1 - t0), Y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+      if (!wSel || !pts.some(p => p.k === wSel)) wSel = pts.at(-1).k;
+      const sel = pts.find(p => p.k === wSel), si = pts.indexOf(sel);
+      const ticks = [lo + pad, (lo + hi) / 2, hi - pad];
+      let svg = `<svg class="chart" id="wSvg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Weight over time">`;
+      svg += ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 3}" text-anchor="end">${v.toFixed(hi - lo > 12 ? 0 : 1)}</text>`).join('');
+      const xl = [pts[0], pts[Math.floor((pts.length - 1) / 2)], pts.at(-1)].filter((p, i, a) => a.indexOf(p) === i);
+      svg += xl.map((p, i) => `<text x="${X(p.t)}" y="${H - 5}" text-anchor="${i === 0 ? 'start' : i === xl.length - 1 ? 'end' : 'middle'}">${shortDate(p.k)}</text>`).join('');
+      svg += `<line class="sel-line" x1="${X(sel.t)}" x2="${X(sel.t)}" y1="${T}" y2="${H - B}"/>`;
+      if (goal) svg += `<line class="ideal" x1="${L}" x2="${W - R}" y1="${Y(goal)}" y2="${Y(goal)}"/><text x="${W - R}" y="${Y(goal) - 5}" text-anchor="end" style="fill:var(--text);font-weight:600">Goal ${goal.toFixed(1)}</text>`;
+      svg += `<polyline class="actual" style="stroke:var(--accent)" points="${pts.map(p => `${X(p.t)},${Y(p.v)}`).join(' ')}"/>`;
+      if (pts.length <= 60) svg += pts.map(p => `<circle cx="${X(p.t)}" cy="${Y(p.v)}" r="3" fill="var(--accent)" stroke="var(--card)" stroke-width="1.5"/>`).join('');
+      svg += `<circle cx="${X(sel.t)}" cy="${Y(sel.v)}" r="6" fill="var(--accent)" stroke="var(--card)" stroke-width="2.5"/>`;
+      svg += `</svg>`;
+      $('#wChart').innerHTML = svg;
+      const d = si > 0 ? sel.v - pts[si - 1].v : null;
+      $('#wReadout').innerHTML = `${longDate(sel.k)}: <b>${sel.v.toFixed(1)} ${u}</b>${d == null ? '' : ` <span>(${signed(d)} vs previous)</span>`}`;
+      const svgEl = $('#wSvg');
+      const pick = e => {
+        const r = svgEl.getBoundingClientRect(), x = (e.clientX - r.left) * W / r.width;
+        let best = pts[0];
+        for (const p of pts) if (Math.abs(X(p.t) - x) < Math.abs(X(best.t) - x)) best = p;
+        if (best.k !== wSel) { wSel = best.k; renderWeightChart(); }
+      };
+      svgEl.addEventListener('pointerdown', pick);
+      svgEl.addEventListener('pointermove', e => { if (e.buttons || e.pointerType === 'mouse') pick(e); });
+    }
+
+    // Recent weigh-ins
+    const rows = all.slice().reverse().slice(0, 30);
+    $('#wList').innerHTML = rows.length ? rows.map(p => {
+      const i = all.indexOf(p), d = i > 0 ? p.v - all[i - 1].v : null;
+      return `<button class="w-row" type="button" data-wk="${p.k}"><span>${longDate(p.k)}</span><b>${p.v.toFixed(1)} ${u}${d == null ? '' : `<small>${signed(d)}</small>`}</b></button>`;
+    }).join('') : '';
+  }
+
+  $('#weightChartBtn').onclick = () => { wSel = null; renderWeightChart(); openSheet($('#weightChartSheet')); };
+  $('#wRange').onclick = e => { const b = e.target.closest('[data-range]'); if (b) { wRange = b.dataset.range; wSel = null; renderWeightChart(); } };
+  $('#wList').onclick = e => { const b = e.target.closest('[data-wk]'); if (b) openWeight(b.dataset.wk); };
+
   // ---------- favorites ----------
   function renderFavorites() {
     const q = $('#favSearch').value.trim().toLowerCase();
@@ -1133,10 +1349,17 @@ Rules for every case:
     $('#modelInfo').textContent = settings.lastModel ? `Last photo or description was analyzed by ${settings.lastModel}.` : '';
     $('#apiKey').value = settings.apiKey; $('#modelName').value = settings.model;
     $('#weekStart').value = String(settings.weekStart);
+    $('#goalWeightLabel').textContent = `Goal weight (${wUnit()})`;
+    $('#goalWeight').value = settings.goalWeightLb ? fmtW(settings.goalWeightLb) : '';
     goalHint(); openSheet($('#settingsSheet'));
   }
   $('#openSettings').onclick = openSettings;
   $('#setupGo').onclick = openSettings;
+  $('#goalWeight').addEventListener('input', e => {
+    const v = num(e.target.value);
+    settings.goalWeightLb = v > 0 ? Math.round(fromDisp(v) * 100) / 100 : null;
+    saveSettings();
+  });
   [['#goalCal', 'calories'], ['#goalP', 'protein'], ['#goalC', 'carbs'], ['#goalF', 'fat']].forEach(([sel, k]) => {
     $(sel).addEventListener('input', e => { settings.goals[k] = Math.max(0, r0(num(e.target.value))); saveSettings(); goalHint(); render(); });
   });
@@ -1152,7 +1375,7 @@ Rules for every case:
   };
 
   $('#exportBtn').onclick = async () => {
-    const data = JSON.stringify({ app: 'Bulking Era', version: 1, exported: new Date().toISOString(), goals: settings.goals, entries, favorites });
+    const data = JSON.stringify({ app: 'Bulking Era', version: 1, exported: new Date().toISOString(), goals: settings.goals, goalWeightLb: settings.goalWeightLb || null, entries, favorites, weights });
     const name = `bulking-era-backup-${dateKey(new Date())}.json`;
     const file = new File([data], name, { type: 'application/json' });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -1171,6 +1394,11 @@ Rules for every case:
       if (!confirm(`Restore ${data.entries.length} entries from this backup? Entries already on this phone are kept.`)) return;
       const have = new Set(entries.map(x => x.id));
       entries.push(...data.entries.filter(x => x && x.id && !have.has(x.id)));
+      if (num(data.goalWeightLb) > 0 && !settings.goalWeightLb) { settings.goalWeightLb = num(data.goalWeightLb); saveSettings(); }
+      if (data.weights && typeof data.weights === 'object') {
+        for (const [k, v] of Object.entries(data.weights)) if (!(k in weights) && num(v) > 0) weights[k] = num(v);
+        saveWeights();
+      }
       if (Array.isArray(data.favorites)) {
         const haveFav = new Set(favorites.map(x => x.id));
         favorites.push(...data.favorites.filter(x => x && x.id && !haveFav.has(x.id))); saveFavorites();
