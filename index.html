@@ -228,6 +228,12 @@
   .wk-day .mid { flex: 1; min-width: 0; }
   .wk-day .line1 { display: flex; justify-content: space-between; font-size: 14px; font-variant-numeric: tabular-nums; }
   .wk-day .line1 span { color: var(--muted); font-size: 13px; }
+  .mic-wrap { text-align: center; margin: 4px 0 14px; }
+  .mic-btn { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); display: inline-grid; place-items: center; box-shadow: 0 6px 20px rgba(31,138,91,.3); }
+  .mic-btn svg { width: 32px; height: 32px; }
+  .mic-btn.listening { background: var(--danger); animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--danger) 20%, transparent); } }
+  .mic-label { font-size: 14px; color: var(--muted); margin-top: 8px; min-height: 20px; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -278,6 +284,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
       Snap food
     </button>
+    <button class="btn alt" id="speakBtn" aria-label="Describe food by voice or text"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
     <button class="btn alt" id="favBtn" aria-label="Favorites"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5-4.8-4.6 6.6-.9z"/></svg></button>
     <button class="btn alt" id="manualBtn" aria-label="Add manually"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
   </div>
@@ -289,6 +296,22 @@
 <div class="sheet" id="foodSheet">
   <div class="scrim" data-close></div>
   <div class="panel"><div class="panel-inner" id="foodBody"></div></div>
+</div>
+
+<!-- Describe (voice/text) sheet -->
+<div class="sheet" id="describeSheet">
+  <div class="scrim" data-close></div>
+  <div class="panel"><div class="panel-inner">
+    <div class="grab"></div>
+    <div class="sheet-head"><h2>What did you eat?</h2><button class="link-btn" data-close>Cancel</button></div>
+    <div class="mic-wrap" id="micWrap">
+      <button type="button" class="mic-btn" id="micBtn" aria-label="Start talking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/></svg></button>
+      <div class="mic-label" id="micLabel">Tap to talk</div>
+    </div>
+    <textarea id="describeText" rows="4" placeholder="e.g. 4 oz of chicken, a small slice of white bread, and half an apple"></textarea>
+    <p class="hint" id="describeHint">Speak or type. Include amounts when you know them. You can also tap 🎤 on the keyboard to dictate.</p>
+    <button class="btn primary block" type="button" id="describeGo" style="margin-top:14px">Get calories &amp; macros</button>
+  </div></div>
 </div>
 
 <!-- Big icon sheet -->
@@ -677,37 +700,71 @@ Rules for every case:
     propertyOrdering: ['source', 'name', 'serving_size', 'servings_per_container', 'confidence', 'notes', 'items'],
   };
 
-  const DEFAULT_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash'];
+  // Tried in order. When one is busy, over its free limit, or missing, the next one is used.
+  const DEFAULT_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+  const wait = ms => new Promise(r => setTimeout(r, ms));
 
-  async function callGemini(parts, { json = true } = {}) {
+  async function callGemini(parts, { json = true, onStatus = () => {} } = {}) {
     if (!settings.apiKey) throw new Error('Add your free Gemini API key in Settings first.');
-    const models = settings.model ? [settings.model] : DEFAULT_MODELS;
+    const models = settings.model ? [settings.model, ...DEFAULT_MODELS.filter(m => m !== settings.model)] : DEFAULT_MODELS;
     const body = { contents: [{ role: 'user', parts }] };
     if (json) body.generationConfig = { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.2 };
-    let lastErr;
-    for (const m of models) {
-      let res;
-      try {
-        res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey },
-          body: JSON.stringify(body),
-        });
-      } catch (e) { throw new Error("Couldn't reach Google. Check your internet connection and try again."); }
-      const j = await res.json().catch(() => ({}));
-      if (res.status === 404) { lastErr = new Error(`Model "${m}" wasn't found.`); continue; }
-      if (!res.ok) {
+    let busy = false, limited = false, lastMsg = '';
+    for (const [mi, m] of models.entries()) {
+      // Busy/overloaded errors are usually momentary: retry the same model a couple of times first.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        let res;
+        try {
+          res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey },
+            body: JSON.stringify(body),
+          });
+        } catch (e) { throw new Error("Couldn't reach Google. Check your internet connection and try again."); }
+        const j = await res.json().catch(() => ({}));
         const msg = j.error?.message || `Request failed (${res.status}).`;
-        if (res.status === 429) throw new Error("Google's free limit was hit for the moment. Wait a minute and try again.");
+        if (res.ok) {
+          const cand = j.candidates?.[0];
+          const text = cand?.content?.parts?.map(p => p.text || '').join('') || '';
+          if (!text) throw new Error(`The AI didn't return an answer${cand?.finishReason ? ` (${cand.finishReason})` : ''}. Try another photo.`);
+          return json ? JSON.parse(text) : text;
+        }
         if (/API key not valid|API_KEY_INVALID/i.test(msg)) throw new Error('That API key was rejected. Double-check it in Settings.');
-        throw new Error(msg);
+        lastMsg = msg;
+        if (res.status === 404) break;                              // model doesn't exist → next model
+        if (res.status === 429) { limited = true; break; }          // this model's free quota is used up → next model
+        if (res.status >= 500 || /overload|high demand|unavailable|try again/i.test(msg)) {
+          busy = true;
+          if (attempt < 2) { onStatus('Google is busy — retrying…'); await wait(1500 * (attempt + 1)); continue; }
+          break;                                                    // still busy → next model
+        }
+        throw new Error(msg);                                       // anything else is a real error
       }
-      const cand = j.candidates?.[0];
-      const text = cand?.content?.parts?.map(p => p.text || '').join('') || '';
-      if (!text) throw new Error(`The AI didn't return an answer${cand?.finishReason ? ` (${cand.finishReason})` : ''}. Try another photo.`);
-      return json ? JSON.parse(text) : text;
+      if (mi < models.length - 1) onStatus('Trying a backup AI model…');
     }
-    throw lastErr || new Error('No model available.');
+    if (busy) throw new Error("Google's AI is very busy right now. Wait a minute and tap Re-analyze photo.");
+    if (limited) throw new Error("Google's free limit was hit for the moment. Wait a minute and tap Re-analyze photo.");
+    throw new Error(lastMsg || 'No AI model was available.');
+  }
+
+  const TEXT_PROMPT = `You are an expert nutritionist logging food for a calorie and macro tracker. The user described what they ate in their own words. It may have been dictated by voice, so expect transcription quirks (e.g. "for oz" means "4 oz"). Return JSON.
+
+- Return one item per distinct food or drink mentioned.
+- Use the exact quantities given. If no quantity is given, assume one typical adult serving and say what you assumed in "portion".
+- Assume typical preparation unless told otherwise (e.g. chicken breast = skinless, cooked weight; bread = one standard slice). "Small", "medium" and "large" mean typical sizes for that food.
+- If a brand or restaurant item is named, use its published nutrition values and set source "product"; otherwise set source "estimate".
+- Values cover the full amount described. Set servings_per_container to 0.
+- Use grams for protein, carbs, fat, and fiber; kilocalories for calories. Keep calories consistent with macros (protein 4, carbs 4, fat 9 kcal/g) within ~10%.
+- "name" is a short summary of the whole meal (under 40 characters).
+- confidence: high when foods and quantities are specific, medium when you had to assume portions, low when the description is vague.
+- Briefly mention any important assumptions in notes.
+- If the text doesn't describe food or drink, return no items and explain in notes.`;
+
+  const showStatus = t => { const el = document.getElementById('loadingMsg'); if (el) el.textContent = t; };
+
+  async function analyzeText(description) {
+    const r = await callGemini([{ text: `${TEXT_PROMPT}\n\nWhat the user ate: ${description}` }], { onStatus: showStatus });
+    return normalizeResult(r);
   }
 
   async function analyzePhoto(dataUrl, note) {
@@ -715,7 +772,10 @@ Rules for every case:
       { text: PROMPT + (note ? `\n\nExtra context from the user (trust this over the photo where they conflict): ${note}` : '') },
       { inline_data: { mime_type: 'image/jpeg', data: dataUrl.split(',')[1] } },
     ];
-    const r = await callGemini(parts);
+    return normalizeResult(await callGemini(parts, { onStatus: showStatus }));
+  }
+
+  function normalizeResult(r) {
     return {
       source: r.source || 'estimate',
       name: r.name || 'Food',
@@ -759,7 +819,7 @@ Rules for every case:
     if (img) h += `<img class="photo" src="${img}" alt="">`;
 
     if (st.loading) {
-      h += `<div class="loading"><div class="spinner"></div>Reading the label or estimating portions…</div>`;
+      h += `<div class="loading"><div class="spinner"></div><span id="loadingMsg">${photo ? 'Reading the label or estimating portions…' : 'Looking up your foods…'}</span></div>`;
       $('#foodBody').innerHTML = h; return;
     }
     if (st.error) h += `<div class="error">${esc(st.error)}</div>`;
@@ -803,6 +863,10 @@ Rules for every case:
       h += `<label class="field"><span>Something off? Add a note and re-analyze</span>
         <textarea rows="2" data-f="note" placeholder="e.g. I only ate half · cooked in olive oil · it's a 12 oz latte">${esc(d.note || '')}</textarea></label>
         <button class="btn block" type="button" id="reanalyze">Re-analyze photo</button>`;
+    } else if (d.describe != null && !st.existing) {
+      h += `<label class="field"><span>What you ate · edit and re-analyze if something's off</span>
+        <textarea rows="3" data-f="describe">${esc(d.describe)}</textarea></label>
+        <button class="btn block" type="button" id="reanalyze">Re-analyze</button>`;
     }
 
     h += `<div class="actions"><button class="btn primary block" type="button" id="saveFood">${st.existing ? 'Save changes' : 'Add to log'}</button>`;
@@ -842,7 +906,10 @@ Rules for every case:
     }
     if (t.dataset.rm) { draft.items.splice(+t.dataset.rm, 1); renderFood(); return; }
     if (t.id === 'addItem') { draft.items.push({ name: '', portion: '', calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }); renderFood(); return; }
-    if (t.id === 'reanalyze') { runAnalysis(draft.note); return; }
+    if (t.id === 'reanalyze') {
+      if (!photo && !(draft.describe || '').trim()) { toast('Describe what you ate first'); return; }
+      runAnalysis(draft.note); return;
+    }
     if (t.id === 'saveFood') { saveDraft(); return; }
     if (t.id === 'favToggle') {
       draft._fav = !draft._fav;
@@ -889,9 +956,9 @@ Rules for every case:
   async function runAnalysis(note) {
     sheetState = { loading: true }; renderFood();
     try {
-      const r = await analyzePhoto(photo.full, note);
+      const r = photo ? await analyzePhoto(photo.full, note) : await analyzeText(draft.describe);
       Object.assign(draft, r, { servings: 1, note: note || '' });
-      if (!r.items.length) { sheetState = { error: r.notes || "Couldn't find any food in that photo. Try again or add it manually." }; draft.items = [{ name: '', portion: '', calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }]; }
+      if (!r.items.length) { sheetState = { error: r.notes || (photo ? "Couldn't find any food in that photo. Try again or add it manually." : "Couldn't pick out any foods from that. Try describing it differently.") }; draft.items = [{ name: '', portion: '', calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0 }]; }
       else sheetState = {};
     } catch (err) {
       sheetState = { error: err.message };
@@ -910,6 +977,61 @@ Rules for every case:
     openFood(newDraft());
     runAnalysis('');
   }
+
+  // ---------- describe by voice or text ----------
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, recBase = '';
+  function setMic(listening, label) {
+    $('#micBtn').classList.toggle('listening', listening);
+    $('#micLabel').textContent = label ?? (listening ? 'Listening… tap to stop' : 'Tap to talk');
+  }
+  function stopListening() { if (rec) { try { rec.stop(); } catch {} } }
+  function startListening() {
+    if (!SpeechRec) return false;
+    try {
+      rec = new SpeechRec();
+      rec.lang = navigator.language || 'en-US';
+      rec.interimResults = true;
+      rec.continuous = false;  // iOS repeats phrases in continuous mode; one utterance is plenty here
+      recBase = $('#describeText').value.trim();
+      rec.onresult = e => {
+        let said = '';
+        for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript;
+        $('#describeText').value = (recBase ? recBase + ' ' : '') + said.trim();
+      };
+      rec.onerror = e => {
+        rec = null;
+        const blocked = e.error === 'not-allowed' || e.error === 'service-not-allowed';
+        setMic(false, blocked ? 'Voice isn\'t available here. Tap the box and use 🎤 on the keyboard.' : e.error === 'no-speech' ? "Didn't hear anything. Tap to try again." : 'Tap to talk');
+      };
+      rec.onend = () => { if (rec) { rec = null; setMic(false); } };
+      rec.start();
+      setMic(true);
+      return true;
+    } catch { rec = null; setMic(false, 'Tap the box and use 🎤 on the keyboard.'); return false; }
+  }
+  $('#speakBtn').onclick = () => {
+    if (!settings.apiKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
+    $('#describeText').value = '';
+    $('#micWrap').classList.toggle('hidden', !SpeechRec);
+    setMic(false);
+    openSheet($('#describeSheet'));
+    // Start listening right away; without voice support, bring up the keyboard (it has its own dictation key).
+    if (!SpeechRec || !startListening()) $('#describeText').focus();
+  };
+  $('#micBtn').onclick = () => { if (rec) stopListening(); else startListening(); };
+  $('#describeText').addEventListener('focus', stopListening);
+  $('#describeSheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) stopListening(); });
+  $('#describeGo').onclick = () => {
+    stopListening();
+    const text = $('#describeText').value.trim();
+    if (!text) { toast('Say or type what you ate first'); return; }
+    closeSheet($('#describeSheet'));
+    photo = null;
+    const d = newDraft(); d.describe = text;
+    openFood(d);
+    runAnalysis('');
+  };
 
   $('#snapBtn').onclick = () => $('#cameraInput').click();
   $('#cameraInput').onchange = e => { handlePhoto(e.target.files[0]); e.target.value = ''; };
