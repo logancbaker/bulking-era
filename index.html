@@ -367,6 +367,7 @@
 
     <div class="section-title">Advanced</div>
     <label class="field"><span>AI model (leave blank for default)</span><input type="text" id="modelName" placeholder="gemini-flash-latest" autocapitalize="off" spellcheck="false"></label>
+    <p class="hint" id="modelInfo" style="margin:-4px 0 12px"></p>
     <button class="btn danger block" id="clearBtn">Delete all logged food</button>
   </div></div>
 </div>
@@ -706,7 +707,9 @@ Rules for every case:
 
   async function callGemini(parts, { json = true, onStatus = () => {} } = {}) {
     if (!settings.apiKey) throw new Error('Add your free Gemini API key in Settings first.');
-    const models = settings.model ? [settings.model, ...DEFAULT_MODELS.filter(m => m !== settings.model)] : DEFAULT_MODELS;
+    // Order: her manual pick (if any), then the model that last worked (for 24h), then the defaults.
+    const recent = settings.lastModel && Date.now() - (settings.lastModelAt || 0) < 24 * 3600e3 ? settings.lastModel : null;
+    const models = [...new Set([settings.model, recent, ...DEFAULT_MODELS].filter(Boolean))];
     const body = { contents: [{ role: 'user', parts }] };
     if (json) body.generationConfig = { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.2 };
     let busy = false, limited = false, lastMsg = '';
@@ -727,7 +730,9 @@ Rules for every case:
           const cand = j.candidates?.[0];
           const text = cand?.content?.parts?.map(p => p.text || '').join('') || '';
           if (!text) throw new Error(`The AI didn't return an answer${cand?.finishReason ? ` (${cand.finishReason})` : ''}. Try another photo.`);
-          return json ? JSON.parse(text) : text;
+          const out = json ? JSON.parse(text) : text;
+          if (settings.lastModel !== m || mi > 0) { settings.lastModel = m; settings.lastModelAt = Date.now(); saveSettings(); }
+          return out;
         }
         if (/API key not valid|API_KEY_INVALID/i.test(msg)) throw new Error('That API key was rejected. Double-check it in Settings.');
         lastMsg = msg;
@@ -1093,6 +1098,7 @@ Rules for every case:
   function openSettings() {
     $('#goalCal').value = settings.goals.calories; $('#goalP').value = settings.goals.protein;
     $('#goalC').value = settings.goals.carbs; $('#goalF').value = settings.goals.fat;
+    $('#modelInfo').textContent = settings.lastModel ? `Last photo or description was analyzed by ${settings.lastModel}.` : '';
     $('#apiKey').value = settings.apiKey; $('#modelName').value = settings.model;
     $('#weekStart').value = String(settings.weekStart);
     goalHint(); openSheet($('#settingsSheet'));
