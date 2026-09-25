@@ -247,7 +247,7 @@
   }
   .weight-entry { display: flex; gap: 10px; align-items: stretch; margin: 8px 0 4px; }
   .weight-entry input { font-size: 34px; font-weight: 700; text-align: center; padding: 14px 10px; font-variant-numeric: tabular-nums; flex: 1; min-width: 0; }
-  .weight-entry .seg { flex-direction: column; width: 64px; flex: none; }
+  .weight-entry .unit-suffix { display: grid; place-items: center; width: 44px; flex: none; font-size: 22px; font-weight: 600; color: var(--muted); }
   .w-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
   .w-stats div { background: var(--card); border-radius: 14px; padding: 10px 8px; text-align: center; }
   .w-stats b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
@@ -373,7 +373,7 @@
     <div class="sheet-head"><h2 id="weightTitle">Today's weight</h2><button class="link-btn" data-close>Cancel</button></div>
     <div class="weight-entry">
       <input type="number" inputmode="decimal" step="0.1" min="0" id="weightInput" placeholder="0.0" aria-label="Weight">
-      <div class="seg" id="unitSeg"><button type="button" data-unit="lb">lb</button><button type="button" data-unit="kg">kg</button></div>
+      <div class="unit-suffix" id="weightUnitLabel">lb</div>
     </div>
     <p class="hint" id="weightLast"></p>
     <div class="actions">
@@ -410,6 +410,8 @@
     </div>
     <p class="hint" id="goalHint"></p>
     <label class="field"><span id="goalWeightLabel">Goal weight (lb)</span><input type="number" inputmode="decimal" step="0.1" id="goalWeight" placeholder="Optional"></label>
+    <div class="field"><span style="display:block;font-size:13px;color:var(--muted);margin-bottom:5px;font-weight:500">Weight units</span>
+      <div class="seg" id="unitSetting"><button type="button" data-unit="lb">Pounds (lb)</button><button type="button" data-unit="kg">Kilograms (kg)</button></div></div>
 
     <div class="section-title">Gemini API key</div>
     <div class="keywrap"><input type="password" id="apiKey" placeholder="Paste your key here" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="toggleKey" type="button">Show</button></div>
@@ -1170,7 +1172,7 @@ Rules for every case:
     $('#weightLast').textContent = (prev ? `Last weigh-in: ${fmtW(weights[prev])} ${wUnit()} on ${longDate(prev)}` : 'Tip: weigh in at the same time each day, like first thing in the morning.')
       + (settings.goalWeightLb ? ` · Goal: ${fmtW(settings.goalWeightLb)} ${wUnit()}` : '');
     $('#weightDelete').classList.toggle('hidden', !weights[weightDate]);
-    document.querySelectorAll('#unitSeg button').forEach(b => b.classList.toggle('on', b.dataset.unit === wUnit()));
+    $('#weightUnitLabel').textContent = wUnit();
     openSheet($('#weightSheet'));
     $('#weightInput').focus();
   }
@@ -1194,13 +1196,6 @@ Rules for every case:
     if (!confirm('Delete this weigh-in?')) return;
     delete weights[weightDate];
     afterWeightChange('Weigh-in deleted');
-  };
-  $('#unitSeg').onclick = e => {
-    const b = e.target.closest('[data-unit]'); if (!b || b.dataset.unit === wUnit()) return;
-    const typed = num($('#weightInput').value), lb = wExactLb || (typed ? fromDisp(typed) : 0);
-    settings.weightUnit = b.dataset.unit; saveSettings();
-    openWeight(weightDate);
-    if (lb) { wExactLb = lb; $('#weightInput').value = fmtW(lb); }
   };
 
   const RANGES = [['1M', 30], ['3M', 91], ['6M', 182], ['1Y', 365], ['All', Infinity]];
@@ -1351,10 +1346,18 @@ Rules for every case:
     $('#weekStart').value = String(settings.weekStart);
     $('#goalWeightLabel').textContent = `Goal weight (${wUnit()})`;
     $('#goalWeight').value = settings.goalWeightLb ? fmtW(settings.goalWeightLb) : '';
+    document.querySelectorAll('#unitSetting button').forEach(b => b.classList.toggle('on', b.dataset.unit === wUnit()));
     goalHint(); openSheet($('#settingsSheet'));
   }
   $('#openSettings').onclick = openSettings;
   $('#setupGo').onclick = openSettings;
+  $('#unitSetting').onclick = e => {
+    const b = e.target.closest('[data-unit]'); if (!b || b.dataset.unit === wUnit()) return;
+    settings.weightUnit = b.dataset.unit; saveSettings();
+    document.querySelectorAll('#unitSetting button').forEach(x => x.classList.toggle('on', x === b));
+    $('#goalWeightLabel').textContent = `Goal weight (${wUnit()})`;
+    $('#goalWeight').value = settings.goalWeightLb ? fmtW(settings.goalWeightLb) : '';
+  };
   $('#goalWeight').addEventListener('input', e => {
     const v = num(e.target.value);
     settings.goalWeightLb = v > 0 ? Math.round(fromDisp(v) * 100) / 100 : null;
