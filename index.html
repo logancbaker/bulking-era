@@ -264,6 +264,18 @@
   .macro-pct .grams { display: block; text-align: center; margin-top: 6px; font-size: 15px; font-variant-numeric: tabular-nums; }
   .goal-ok { color: var(--accent); font-weight: 600; }
   .goal-bad { color: var(--danger); font-weight: 600; }
+  .toggle-row { display: flex; align-items: center; gap: 12px; background: var(--card); border-radius: 14px; padding: 12px 14px; margin-top: 12px; cursor: pointer; }
+  .toggle-row span { flex: 1; }
+  .toggle-row small { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .toggle-row input { position: absolute; opacity: 0; pointer-events: none; }
+  .toggle-row i { width: 50px; height: 30px; border-radius: 15px; background: var(--line); position: relative; flex: none; transition: background .2s; }
+  .toggle-row i::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .2s; }
+  .toggle-row input:checked + i { background: var(--accent); }
+  .toggle-row input:checked + i::after { transform: translateX(20px); }
+  .usage-card { background: var(--card); border-radius: 14px; padding: 12px 14px; margin-top: 10px; }
+  .usage-card .nums3 { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; margin: 8px 0 6px; }
+  .usage-card b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .usage-card .nums3 span { font-size: 12px; color: var(--muted); }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -432,6 +444,14 @@
     <p class="hint">Free from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. It's saved only on this phone.</p>
     <button class="btn block" id="testKey" style="margin-top:10px">Test key</button>
 
+    <div class="section-title">Claude backup (optional, paid)</div>
+    <div class="keywrap"><input type="password" id="claudeKey" placeholder="Paste your Claude API key" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="toggleClaudeKey" type="button">Show</button></div>
+    <p class="hint">Only used when Google's free AI fails twice in a row; then Claude handles the rest of that day. Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> and set a monthly spend limit there. Saved only on this phone.</p>
+    <button class="btn block" id="testClaudeKey" style="margin-top:10px">Test Claude key</button>
+    <p class="hint" id="claudeStatus" style="margin-top:8px"></p>
+    <label class="toggle-row"><span><b>Use Claude only</b><small>Skip Google's free AI and send every photo and description to Claude (paid).</small></span><input type="checkbox" id="claudeOnly"><i></i></label>
+    <div class="usage-card" id="claudeUsageCard"></div>
+
     <div class="section-title">Backup</div>
     <p class="hint">Your log lives only on this phone. Save a backup now and then, e.g. to Files or iCloud Drive.</p>
     <div class="row" style="margin-top:10px">
@@ -522,7 +542,7 @@
   let weekSel = null;          // day index (1–7) picked on the pace chart
 
   function render() {
-    $('#setupCard').classList.toggle('hidden', !!settings.apiKey);
+    $('#setupCard').classList.toggle('hidden', !!(settings.apiKey || settings.claudeKey));
     updateWeightBtn();
     $('#dayView').classList.toggle('hidden', mode !== 'day');
     $('#weekView').classList.toggle('hidden', mode !== 'week');
@@ -534,7 +554,7 @@
       : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     $('#dateLabel').textContent = label;
     $('#nextDay').disabled = viewDate >= today;
-    $('#setupCard').classList.toggle('hidden', !!settings.apiKey);
+    $('#setupCard').classList.toggle('hidden', !!(settings.apiKey || settings.claudeKey));
 
     const dayEntries = entries.filter(e => e.date === viewDate);
     const t = dayEntries.reduce((a, e) => { const x = entryTotals(e); for (const k in a) a[k] += x[k]; return a; },
@@ -782,55 +802,154 @@ Rules for every case:
     propertyOrdering: ['source', 'name', 'serving_size', 'servings_per_container', 'confidence', 'notes', 'items'],
   };
 
-  // Tried in order. When one is busy, over its free limit, or missing, the next one is used.
-  const DEFAULT_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
-  const wait = ms => new Promise(r => setTimeout(r, ms));
+  // ---- AI routing ----
+  // Free Gemini models are ranked by their success record. A request tries the best one, then the next best;
+  // after two failed Google attempts it switches to Claude (paid backup) and stays on Claude for the rest of the day.
+  const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
+  const CLAUDE_MODEL = 'claude-sonnet-5-5', CLAUDE_NAME = 'Claude Sonnet 5.5';
+  const CLAUDE_PRICE = { input: 2, output: 10 };  // USD per million tokens (Anthropic list price for Sonnet 5.5)
 
-  async function callGemini(parts, { json = true, onStatus = () => {} } = {}) {
-    if (!settings.apiKey) throw new Error('Add your free Gemini API key in Settings first.');
-    // Order: her manual pick (if any), then the model that last worked (for 24h), then the defaults.
-    const recent = settings.lastModel && Date.now() - (settings.lastModelAt || 0) < 24 * 3600e3 ? settings.lastModel : null;
-    const models = [...new Set([settings.model, recent, ...DEFAULT_MODELS].filter(Boolean))];
+  // Running Claude spend on this phone, from the token counts Claude returns with every answer.
+  let claudeUsage = store.get('ms.claudeUsage', null);
+  function recordClaudeUsage(u) {
+    if (!u) return;
+    const inTok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0), outTok = u.output_tokens || 0;
+    const cost = (inTok * CLAUDE_PRICE.input + outTok * CLAUDE_PRICE.output) / 1e6;
+    const month = dateKey(new Date()).slice(0, 7);
+    claudeUsage = claudeUsage || { since: dateKey(new Date()), requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, months: {} };
+    claudeUsage.requests++; claudeUsage.inputTokens += inTok; claudeUsage.outputTokens += outTok; claudeUsage.cost += cost;
+    claudeUsage.months[month] = (claudeUsage.months[month] || 0) + cost;
+    try { store.set('ms.claudeUsage', claudeUsage); } catch {}
+  }
+  const money = x => x < 0.995 ? `${(x * 100).toFixed(x < 0.1 ? 1 : 0)}¢` : `$${x.toFixed(2)}`;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const busyError = msg => Object.assign(new Error(msg), { busy: true });
+
+  // Success record per Gemini model. Older results fade (×0.97 per new result) so the ranking follows recent reliability.
+  let aiStats = store.get('ms.aiStats', {});
+  function recordResult(m, ok) {
+    const st = aiStats[m] || (aiStats[m] = { ok: 0, fail: 0 });
+    st.ok *= 0.97; st.fail *= 0.97; ok ? st.ok++ : st.fail++;
+    try { store.set('ms.aiStats', aiStats); } catch {}
+  }
+  // Starts every model at a neutral ~70% so one busy moment doesn't reshuffle the order.
+  const successRate = m => { const st = aiStats[m] || { ok: 0, fail: 0 }; return (st.ok + 3) / (st.ok + st.fail + 4.3); };
+  // The "lite" models are less accurate, so they only move ahead when they're clearly more reliable.
+  const rankScore = m => successRate(m) - (/lite/.test(m) ? 0.15 : 0);
+  function geminiOrder() {
+    const ranked = [...GEMINI_MODELS].sort((a, b) => rankScore(b) - rankScore(a) || GEMINI_MODELS.indexOf(a) - GEMINI_MODELS.indexOf(b));
+    return settings.model ? [settings.model, ...ranked.filter(m => m !== settings.model)] : ranked;
+  }
+
+  // One Gemini request. Returns { value } on success, { busy } / { missing } on a soft failure; throws on a real error.
+  async function geminiOnce(m, parts, json) {
     const body = { contents: [{ role: 'user', parts }] };
     if (json) body.generationConfig = { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.2 };
-    let busy = false, limited = false, lastMsg = '';
-    for (const [mi, m] of models.entries()) {
-      // Busy/overloaded errors are usually momentary: retry the same model a couple of times first.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        let res;
-        try {
-          res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey },
-            body: JSON.stringify(body),
-          });
-        } catch (e) { throw new Error("Couldn't reach Google. Check your internet connection and try again."); }
-        const j = await res.json().catch(() => ({}));
-        const msg = j.error?.message || `Request failed (${res.status}).`;
-        if (res.ok) {
-          const cand = j.candidates?.[0];
-          const text = cand?.content?.parts?.map(p => p.text || '').join('') || '';
-          if (!text) throw new Error(`The AI didn't return an answer${cand?.finishReason ? ` (${cand.finishReason})` : ''}. Try another photo.`);
-          const out = json ? JSON.parse(text) : text;
-          if (settings.lastModel !== m || mi > 0) { settings.lastModel = m; settings.lastModelAt = Date.now(); saveSettings(); }
-          return out;
-        }
-        if (/API key not valid|API_KEY_INVALID/i.test(msg)) throw new Error('That API key was rejected. Double-check it in Settings.');
-        lastMsg = msg;
-        if (res.status === 404) break;                              // model doesn't exist → next model
-        if (res.status === 429) { limited = true; break; }          // this model's free quota is used up → next model
-        if (res.status >= 500 || /overload|high demand|unavailable|try again/i.test(msg)) {
-          busy = true;
-          if (attempt < 2) { onStatus('Google is busy — retrying…'); await wait(1500 * (attempt + 1)); continue; }
-          break;                                                    // still busy → next model
-        }
-        throw new Error(msg);                                       // anything else is a real error
-      }
-      if (mi < models.length - 1) onStatus('Trying a backup AI model…');
+    let res;
+    try {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': settings.apiKey }, body: JSON.stringify(body),
+      });
+    } catch { throw new Error("Couldn't reach Google. Check your internet connection and try again."); }
+    const j = await res.json().catch(() => ({}));
+    const msg = j.error?.message || `Request failed (${res.status}).`;
+    if (res.ok) {
+      const cand = j.candidates?.[0];
+      const text = cand?.content?.parts?.map(p => p.text || '').join('') || '';
+      if (!text) throw new Error(`The AI didn't return an answer${cand?.finishReason ? ` (${cand.finishReason})` : ''}. Try another photo.`);
+      return { value: json ? JSON.parse(text) : text };
     }
-    if (busy) throw new Error("Google's AI is very busy right now. Wait a minute and tap Re-analyze photo.");
-    if (limited) throw new Error("Google's free limit was hit for the moment. Wait a minute and tap Re-analyze photo.");
-    throw new Error(lastMsg || 'No AI model was available.');
+    if (/API key not valid|API_KEY_INVALID/i.test(msg)) throw new Error('Your Gemini API key was rejected. Double-check it in Settings.');
+    if (res.status === 404) return { missing: true };
+    if (res.status === 429 || res.status >= 500 || /overload|high demand|unavailable|try again/i.test(msg)) return { busy: true };
+    throw new Error(msg);
+  }
+
+  // Claude's structured output wants standard JSON Schema: lowercase types and no extra properties.
+  function toJsonSchema(sc) {
+    const out = { type: sc.type.toLowerCase() };
+    if (sc.enum) out.enum = sc.enum;
+    if (sc.properties) {
+      out.properties = Object.fromEntries(Object.entries(sc.properties).map(([k, v]) => [k, toJsonSchema(v)]));
+      out.required = sc.required || [];
+      out.additionalProperties = false;
+    }
+    if (sc.items) out.items = toJsonSchema(sc.items);
+    return out;
+  }
+  const CLAUDE_SCHEMA = toJsonSchema(SCHEMA);
+
+  // One Claude request (called straight from the phone; the key never leaves it except to Anthropic).
+  async function claudeOnce(parts, json, key = settings.claudeKey) {
+    const content = [];
+    for (const p of parts) if (p.inline_data) content.push({ type: 'image', source: { type: 'base64', media_type: p.inline_data.mime_type, data: p.inline_data.data } });
+    for (const p of parts) if (p.text) content.push({ type: 'text', text: p.text });
+    const body = { model: CLAUDE_MODEL, max_tokens: 8000, output_config: { effort: 'medium' }, messages: [{ role: 'user', content }] };
+    if (json) body.output_config.format = { type: 'json_schema', schema: CLAUDE_SCHEMA };
+    let res;
+    try {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify(body),
+      });
+    } catch { throw new Error("Couldn't reach Claude. Check your internet connection and try again."); }
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = j.error?.message || `Claude request failed (${res.status}).`;
+      if (res.status === 401) throw new Error('Your Claude API key was rejected. Double-check it in Settings.');
+      if (/credit balance/i.test(msg)) throw new Error('Your Claude account is out of credit. Add credit at console.anthropic.com.');
+      if (res.status === 429 || res.status === 529 || res.status >= 500) throw busyError('Claude is busy right now.');
+      throw new Error(msg);
+    }
+    recordClaudeUsage(j.usage);  // billed whenever the request succeeded, even if the answer is unusable
+    if (j.stop_reason === 'refusal') throw new Error("Claude couldn't analyze that one. Try another photo or description.");
+    const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+    if (!text || j.stop_reason === 'max_tokens') throw new Error("Claude didn't return a complete answer. Try again.");
+    return json ? JSON.parse(text) : text;
+  }
+
+  async function claudeWithRetry(parts, json) {
+    try { return await claudeOnce(parts, json); }
+    catch (e) { if (!e.busy) throw e; await wait(1500); return claudeOnce(parts, json); }
+  }
+
+  async function callAI(parts, { json = true, onStatus = () => {} } = {}) {
+    const hasGemini = !!settings.apiKey, hasClaude = !!settings.claudeKey;
+    if (!hasGemini && !hasClaude) throw new Error('Add your free Gemini API key in Settings first.');
+    const today = dateKey(new Date());
+    const done = (value, name) => { settings.lastModel = name; saveSettings(); return value; };
+
+    // "Claude only" setting: skip Google entirely.
+    if (settings.claudeOnly) {
+      if (!hasClaude) throw new Error('"Use Claude only" is on, but there\'s no Claude key. Add one in Settings or turn that off.');
+      return done(await claudeWithRetry(parts, json), CLAUDE_NAME);
+    }
+
+    // Already switched to Claude today, or no Gemini key at all.
+    if (hasClaude && (settings.claudeDay === today || !hasGemini)) {
+      try { return done(await claudeWithRetry(parts, json), CLAUDE_NAME); }
+      catch (e) { if (!e.busy || !hasGemini) throw e; onStatus('Claude is busy — trying Google…'); }
+    }
+
+    let attempts = 0;
+    for (const m of geminiOrder()) {
+      const r = await geminiOnce(m, parts, json);
+      if (r.value !== undefined) { recordResult(m, true); return done(r.value, m); }
+      recordResult(m, false);
+      if (r.missing) continue;                      // model retired or renamed; doesn't count as an attempt
+      attempts++;
+      if (hasClaude && attempts >= 2 && settings.claudeDay !== today) {
+        settings.claudeDay = today; saveSettings();   // stay on Claude until tomorrow
+        onStatus('Google is busy — switching to Claude…');
+        try { return done(await claudeWithRetry(parts, json), CLAUDE_NAME); }
+        catch (e) { if (!e.busy) throw e; onStatus('Claude is busy too — trying Google again…'); continue; }
+      }
+      onStatus('Google is busy — trying a backup…');
+    }
+    throw busyError(hasClaude
+      ? 'Google and Claude are both busy right now. Wait a minute and tap Re-analyze.'
+      : "Google's free AI is busy right now. Wait a minute and tap Re-analyze — or add a Claude backup key in Settings.");
   }
 
   const TEXT_PROMPT = `You are an expert nutritionist logging food for a calorie and macro tracker. The user described what they ate in their own words. It may have been dictated by voice, so expect transcription quirks (e.g. "for oz" means "4 oz"). Return JSON.
@@ -849,7 +968,7 @@ Rules for every case:
   const showStatus = t => { const el = document.getElementById('loadingMsg'); if (el) el.textContent = t; };
 
   async function analyzeText(description) {
-    const r = await callGemini([{ text: `${TEXT_PROMPT}\n\nWhat the user ate: ${description}` }], { onStatus: showStatus });
+    const r = await callAI([{ text: `${TEXT_PROMPT}\n\nWhat the user ate: ${description}` }], { onStatus: showStatus });
     return normalizeResult(r);
   }
 
@@ -858,7 +977,7 @@ Rules for every case:
       { text: PROMPT + (note ? `\n\nExtra context from the user (trust this over the photo where they conflict): ${note}` : '') },
       { inline_data: { mime_type: 'image/jpeg', data: dataUrl.split(',')[1] } },
     ];
-    return normalizeResult(await callGemini(parts, { onStatus: showStatus }));
+    return normalizeResult(await callAI(parts, { onStatus: showStatus }));
   }
 
   function normalizeResult(r) {
@@ -1055,7 +1174,7 @@ Rules for every case:
 
   async function handlePhoto(file) {
     if (!file) return;
-    if (!settings.apiKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
+    if (!settings.apiKey && !settings.claudeKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
     try {
       const img = await loadImage(file);
       photo = { full: toJpeg(img, 1600, 0.85), thumb: toJpeg(img, 112, 0.7, true) };
@@ -1129,7 +1248,7 @@ Rules for every case:
     }
   }
   $('#speakBtn').onclick = () => {
-    if (!settings.apiKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
+    if (!settings.apiKey && !settings.claudeKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
     $('#describeText').value = '';
     $('#micWrap').classList.toggle('hidden', !SpeechRec);
     setMic(false);
@@ -1380,7 +1499,12 @@ Rules for every case:
     const split = settings.macroPct || splitFromGrams();
     $('#goalCal').value = settings.goals.calories;
     $('#pctP').value = split.protein; $('#pctC').value = split.carbs; $('#pctF').value = split.fat;
-    $('#modelInfo').textContent = settings.lastModel ? `Last photo or description was analyzed by ${settings.lastModel}.` : '';
+    $('#claudeKey').value = settings.claudeKey || '';
+    $('#claudeOnly').checked = !!settings.claudeOnly;
+    renderClaudeUsage();
+    $('#claudeStatus').textContent = settings.claudeKey && settings.claudeDay === dateKey(new Date()) ? 'Google was busy earlier, so Claude is handling today. Back to Google tomorrow.' : '';
+    const rates = GEMINI_MODELS.filter(m => aiStats[m]).map(m => `${m} ${Math.round(successRate(m) * 100)}%`).join(' · ');
+    $('#modelInfo').textContent = (settings.lastModel ? `Last analysis: ${settings.lastModel}. ` : '') + (rates ? `Google success rates: ${rates}` : '');
     $('#apiKey').value = settings.apiKey; $('#modelName').value = settings.model;
     $('#weekStart').value = String(settings.weekStart);
     $('#goalWeightLabel').textContent = `Goal weight (${wUnit()})`;
@@ -1417,9 +1541,44 @@ Rules for every case:
   $('#toggleKey').onclick = () => { const i = $('#apiKey'); const show = i.type === 'password'; i.type = show ? 'text' : 'password'; $('#toggleKey').textContent = show ? 'Hide' : 'Show'; };
   $('#testKey').onclick = async () => {
     const b = $('#testKey'); b.disabled = true; b.textContent = 'Testing…';
-    try { await callGemini([{ text: 'Reply with just the word OK.' }], { json: false }); toast('✓ Key works!'); }
-    catch (err) { toast(err.message); }
+    try {
+      if (!settings.apiKey) throw new Error('Paste your Gemini key first.');
+      let ok = false;
+      for (const m of geminiOrder()) { const r = await geminiOnce(m, [{ text: 'Reply with just the word OK.' }], false); if (r.value !== undefined) { ok = true; break; } if (!r.missing) break; }
+      toast(ok ? '✓ Gemini key works!' : '✓ Key accepted, but Google is busy right now.');
+    } catch (err) { toast(err.message); }
     b.disabled = false; b.textContent = 'Test key';
+  };
+  $('#claudeKey').addEventListener('input', e => { settings.claudeKey = e.target.value.trim(); saveSettings(); render(); });
+  $('#claudeOnly').addEventListener('change', e => {
+    settings.claudeOnly = e.target.checked; saveSettings();
+    if (settings.claudeOnly && !settings.claudeKey) toast('Add your Claude key above for this to work');
+  });
+  function renderClaudeUsage() {
+    const u = claudeUsage, month = dateKey(new Date()).slice(0, 7);
+    if (!u || !u.requests) { $('#claudeUsageCard').innerHTML = '<div class="hint" style="margin:0">Claude spending on this phone will show here once it\'s been used.</div>'; return; }
+    const since = parseKey(u.since).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    $('#claudeUsageCard').innerHTML = `<b style="font-size:15px">Claude spending on this phone</b>
+      <div class="nums3"><div><b>${money(u.months[month] || 0)}</b><span>this month</span></div>
+        <div><b>${money(u.cost)}</b><span>all time</span></div>
+        <div><b>${u.requests}</b><span>analyses</span></div></div>
+      <div class="hint" style="margin:0">Since ${since} · avg ${money(u.cost / u.requests)} each · estimated from Claude's token counts at list price. Your exact bill is at console.anthropic.com.
+        <button class="link-btn" type="button" id="resetClaudeUsage" style="padding:0">Reset</button></div>`;
+  }
+  $('#claudeUsageCard').addEventListener('click', e => {
+    if (e.target.id !== 'resetClaudeUsage' || !confirm('Reset the Claude spending total on this phone?')) return;
+    claudeUsage = null; try { localStorage.removeItem('ms.claudeUsage'); } catch {}
+    renderClaudeUsage();
+  });
+  $('#toggleClaudeKey').onclick = () => { const i = $('#claudeKey'); const show = i.type === 'password'; i.type = show ? 'text' : 'password'; $('#toggleClaudeKey').textContent = show ? 'Hide' : 'Show'; };
+  $('#testClaudeKey').onclick = async () => {
+    const b = $('#testClaudeKey'); b.disabled = true; b.textContent = 'Testing…';
+    try {
+      if (!settings.claudeKey) throw new Error('Paste your Claude key first.');
+      await claudeOnce([{ text: 'Reply with just the word OK.' }], false);
+      toast('✓ Claude key works!'); renderClaudeUsage();
+    } catch (err) { toast(err.message); }
+    b.disabled = false; b.textContent = 'Test Claude key';
   };
 
   $('#exportBtn').onclick = async () => {
