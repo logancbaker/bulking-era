@@ -276,6 +276,26 @@
   .usage-card .nums3 { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; margin: 8px 0 6px; }
   .usage-card b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
   .usage-card .nums3 span { font-size: 12px; color: var(--muted); }
+  /* Day planner */
+  .eaten-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  .eaten-row .eaten-line { flex: 1; margin-top: 0; text-align: left; }
+  .plan-btn { width: 46px; height: 46px; border-radius: 50%; border: 0; flex: none; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+  .plan-btn svg { width: 28px; height: 28px; }
+  .plan-btn:active { transform: scale(.94); }
+  .left-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 4px 0 12px; }
+  .left-tiles div { background: var(--card); border-radius: 12px; padding: 8px 4px; text-align: center; }
+  .left-tiles b { display: block; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .left-tiles span { font-size: 11px; color: var(--muted); }
+  .plan-summary { background: var(--card); border-radius: 14px; padding: 12px 14px; margin-bottom: 10px; font-size: 15px; }
+  .plan-item { background: var(--card); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; }
+  .plan-item .top { display: flex; justify-content: space-between; gap: 10px; }
+  .plan-item .top b { font-weight: 600; }
+  .plan-item .top span { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+  .plan-item .sub { font-size: 13px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .plan-item .yours { font-size: 11px; font-weight: 700; color: var(--carbs); margin-left: 6px; letter-spacing: .02em; }
+  .plan-total { display: flex; justify-content: space-between; font-size: 14px; padding: 8px 4px 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .plan-total b { color: var(--text); }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -314,7 +334,12 @@
       </div>
       <div class="macros" id="macroBars"></div>
     </div>
-    <div class="eaten-line" id="eatenLine"></div>
+    <div class="eaten-row">
+      <div class="eaten-line" id="eatenLine"></div>
+      <button class="plan-btn" id="planBtn" type="button" aria-label="What should I eat for the rest of the day?">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7.2c-1.6-1.1-4.6-1.3-6.2.8-1.9 2.5-1 6.8 1.3 9.8 1.2 1.6 2.5 2.4 3.6 1.9.6-.3 1-.3 1.6 0 1.1.5 2.4-.3 3.6-1.9 2.3-3 3.2-7.3 1.3-9.8-1.6-2.1-4.6-1.9-6.2-.8z"/><path d="M12 7.2c-.1-1.9.8-3.4 2.6-4.2"/><path d="M10.1 11.2a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.7.6-.7 1.1v.4" stroke-width="1.7"/><circle cx="12" cy="16.6" r=".4" fill="currentColor"/></svg>
+      </button>
+    </div>
   </div>
 
   <div id="entries"></div>
@@ -355,6 +380,26 @@
     <textarea id="describeText" rows="4" placeholder="e.g. 4 oz of chicken, a small slice of white bread, and half an apple"></textarea>
     <p class="hint" id="describeHint">Speak or type. Include amounts when you know them. You can also tap 🎤 on the keyboard to dictate.</p>
     <button class="btn primary block" type="button" id="describeGo" style="margin-top:14px">Get calories &amp; macros</button>
+  </div></div>
+</div>
+
+<!-- Day planner sheet -->
+<div class="sheet" id="planSheet">
+  <div class="scrim" data-close></div>
+  <div class="panel"><div class="panel-inner">
+    <div class="grab"></div>
+    <div class="sheet-head"><h2 id="planTitle">Plan the rest of today</h2><button class="link-btn" data-close>Done</button></div>
+    <div class="left-tiles" id="planLeft"></div>
+    <div class="chips" id="planPrompts">
+      <button type="button" data-prompt="I'm eating out tonight, so suggest realistic restaurant choices for at least one item.">🍽️ Eating out tonight</button>
+      <button type="button" data-prompt="Keep it quick with no cooking: grab-and-go or ready-to-eat foods only.">⏱️ Quick, no cooking</button>
+      <button type="button" data-prompt="Lean hard on high-protein foods.">💪 Extra protein</button>
+      <button type="button" data-prompt="Include something sweet or a treat that still fits the numbers.">🍫 Something sweet</button>
+    </div>
+    <div id="planBody"></div>
+    <label class="field"><span>Add a note and regenerate</span>
+      <textarea id="planNote" rows="2" placeholder="e.g. no dairy today · only have chicken, rice and eggs at home · want a smoothie"></textarea></label>
+    <button class="btn primary block" type="button" id="planGo">Regenerate suggestions</button>
   </div></div>
 </div>
 
@@ -842,9 +887,9 @@ Rules for every case:
   }
 
   // One Gemini request. Returns { value } on success, { busy } / { missing } on a soft failure; throws on a real error.
-  async function geminiOnce(m, parts, json) {
+  async function geminiOnce(m, parts, json, schema = SCHEMA) {
     const body = { contents: [{ role: 'user', parts }] };
-    if (json) body.generationConfig = { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.2 };
+    if (json) body.generationConfig = { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.2 };
     let res;
     try {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, {
@@ -877,15 +922,16 @@ Rules for every case:
     if (sc.items) out.items = toJsonSchema(sc.items);
     return out;
   }
-  const CLAUDE_SCHEMA = toJsonSchema(SCHEMA);
+  const claudeSchemas = new Map();
+  const claudeSchemaFor = sc => claudeSchemas.get(sc) || claudeSchemas.set(sc, toJsonSchema(sc)).get(sc);
 
   // One Claude request (called straight from the phone; the key never leaves it except to Anthropic).
-  async function claudeOnce(parts, json, key = settings.claudeKey) {
+  async function claudeOnce(parts, json, key = settings.claudeKey, schema = SCHEMA) {
     const content = [];
     for (const p of parts) if (p.inline_data) content.push({ type: 'image', source: { type: 'base64', media_type: p.inline_data.mime_type, data: p.inline_data.data } });
     for (const p of parts) if (p.text) content.push({ type: 'text', text: p.text });
     const body = { model: CLAUDE_MODEL, max_tokens: 8000, output_config: { effort: 'medium' }, messages: [{ role: 'user', content }] };
-    if (json) body.output_config.format = { type: 'json_schema', schema: CLAUDE_SCHEMA };
+    if (json) body.output_config.format = { type: 'json_schema', schema: claudeSchemaFor(schema) };
     let res;
     try {
       res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -909,12 +955,12 @@ Rules for every case:
     return json ? JSON.parse(text) : text;
   }
 
-  async function claudeWithRetry(parts, json) {
-    try { return await claudeOnce(parts, json); }
-    catch (e) { if (!e.busy) throw e; await wait(1500); return claudeOnce(parts, json); }
+  async function claudeWithRetry(parts, json, schema) {
+    try { return await claudeOnce(parts, json, settings.claudeKey, schema); }
+    catch (e) { if (!e.busy) throw e; await wait(1500); return claudeOnce(parts, json, settings.claudeKey, schema); }
   }
 
-  async function callAI(parts, { json = true, onStatus = () => {} } = {}) {
+  async function callAI(parts, { json = true, onStatus = () => {}, schema = SCHEMA } = {}) {
     const hasGemini = !!settings.apiKey, hasClaude = !!settings.claudeKey;
     if (!hasGemini && !hasClaude) throw new Error('Add your free Gemini API key in Settings first.');
     const today = dateKey(new Date());
@@ -923,18 +969,18 @@ Rules for every case:
     // "Claude only" setting: skip Google entirely.
     if (settings.claudeOnly) {
       if (!hasClaude) throw new Error('"Use Claude only" is on, but there\'s no Claude key. Add one in Settings or turn that off.');
-      return done(await claudeWithRetry(parts, json), CLAUDE_NAME);
+      return done(await claudeWithRetry(parts, json, schema), CLAUDE_NAME);
     }
 
     // Already switched to Claude today, or no Gemini key at all.
     if (hasClaude && (settings.claudeDay === today || !hasGemini)) {
-      try { return done(await claudeWithRetry(parts, json), CLAUDE_NAME); }
+      try { return done(await claudeWithRetry(parts, json, schema), CLAUDE_NAME); }
       catch (e) { if (!e.busy || !hasGemini) throw e; onStatus('Claude is busy — trying Google…'); }
     }
 
     let attempts = 0;
     for (const m of geminiOrder()) {
-      const r = await geminiOnce(m, parts, json);
+      const r = await geminiOnce(m, parts, json, schema);
       if (r.value !== undefined) { recordResult(m, true); return done(r.value, m); }
       recordResult(m, false);
       if (r.missing) continue;                      // model retired or renamed; doesn't count as an attempt
@@ -942,7 +988,7 @@ Rules for every case:
       if (hasClaude && attempts >= 2 && settings.claudeDay !== today) {
         settings.claudeDay = today; saveSettings();   // stay on Claude until tomorrow
         onStatus('Google is busy — switching to Claude…');
-        try { return done(await claudeWithRetry(parts, json), CLAUDE_NAME); }
+        try { return done(await claudeWithRetry(parts, json, schema), CLAUDE_NAME); }
         catch (e) { if (!e.busy) throw e; onStatus('Claude is busy too — trying Google again…'); continue; }
       }
       onStatus('Google is busy — trying a backup…');
@@ -1420,6 +1466,130 @@ Rules for every case:
   $('#weightChartBtn').onclick = () => { wSel = null; renderWeightChart(); openSheet($('#weightChartSheet')); };
   $('#wRange').onclick = e => { const b = e.target.closest('[data-range]'); if (b) { wRange = b.dataset.range; wSel = null; renderWeightChart(); } };
   $('#wList').onclick = e => { const b = e.target.closest('[data-wk]'); if (b) openWeight(b.dataset.wk); };
+
+  // ---------- day planner ----------
+  const PLAN_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      summary: { type: 'STRING' },
+      items: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            name: { type: 'STRING' }, amount: { type: 'STRING' },
+            calories: { type: 'NUMBER' }, protein_g: { type: 'NUMBER' }, carbs_g: { type: 'NUMBER' }, fat_g: { type: 'NUMBER' },
+            from_history: { type: 'BOOLEAN' },
+          },
+          required: ['name', 'amount', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'from_history'],
+          propertyOrdering: ['name', 'amount', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'from_history'],
+        },
+      },
+    },
+    required: ['summary', 'items'],
+    propertyOrdering: ['summary', 'items'],
+  };
+
+  function planNumbers() {
+    const g = settings.goals, t = dayTotals(viewDate);
+    return { goal: g, eaten: t, left: { calories: g.calories - t.calories, protein: g.protein - t.protein, carbs: g.carbs - t.carbs, fat: g.fat - t.fat } };
+  }
+
+  // Her favorites plus foods logged in the last 30 days, most-used first, at her usual serving.
+  function knownFoods() {
+    const since = dateKey(addDays(new Date(), -30)), byName = new Map();
+    const add = (name, items, servings, fav) => {
+      const key = (name || '').trim().toLowerCase(); if (!key) return;
+      const p = perServing(items || []), s = num(servings) || 1;
+      const cur = byName.get(key) || { name: name.trim(), count: 0, fav: false, cal: p.calories * s, p: p.protein * s, c: p.carbs * s, f: p.fat * s };
+      cur.count++; cur.fav = cur.fav || fav; byName.set(key, cur);
+    };
+    favorites.forEach(f => add(f.name, f.items, f.servings, true));
+    entries.filter(e => e.date >= since).forEach(e => add(e.name, e.items, e.servings, false));
+    return [...byName.values()].sort((a, b) => (b.fav - a.fav) || (b.count - a.count)).slice(0, 30);
+  }
+
+  function planPrompt(extra) {
+    const { goal, eaten, left } = planNumbers();
+    const when = viewDate === dateKey(new Date())
+      ? `It is currently ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+      : `They are planning ${longDate(viewDate)}; assume the rest of that whole day is available.`;
+    const eatenList = entries.filter(e => e.date === viewDate).map(e => {
+      const x = entryTotals(e); return `- ${e.meal}: ${e.name} (${r0(x.calories)} cal, ${r0(x.protein)}P/${r0(x.carbs)}C/${r0(x.fat)}F)`;
+    }).join('\n') || '- Nothing yet';
+    const foods = knownFoods().map(f => `- ${f.name}${f.fav ? ' (favorite)' : ''}: ${r0(f.cal)} cal, ${r0(f.p)}P/${r0(f.c)}C/${r0(f.f)}F per usual serving${f.count > 1 ? `, logged ${f.count}×` : ''}`).join('\n') || '- (no history yet)';
+    return `You are a sports nutritionist helping someone who is bulking plan what to eat for the rest of the day. Return JSON.
+
+Daily goals: ${goal.calories} cal, ${goal.protein} g protein, ${goal.carbs} g carbs, ${goal.fat} g fat.
+Eaten so far: ${r0(eaten.calories)} cal, ${r0(eaten.protein)} g protein, ${r0(eaten.carbs)} g carbs, ${r0(eaten.fat)} g fat.
+REMAINING to hit the goals: ${r0(left.calories)} cal, ${r0(left.protein)} g protein, ${r0(left.carbs)} g carbs, ${r0(left.fat)} g fat.
+${when}
+
+Already eaten today:
+${eatenList}
+
+Foods this person eats (use these first; you may change the amount):
+${foods}
+
+Suggest ONE simple list of foods with specific amounts that, added together, hit the remaining calories and each remaining macro as closely as possible (aim for within 5%).
+- Prefer foods from their list above and set from_history true for those; fill gaps with common, easy-to-find foods (from_history false).
+- Usually 2–6 items. Keep it realistic for the time left in the day.
+- Use accurate nutrition values for the exact amounts you give, with calories matching the macros (protein 4, carbs 4, fat 9 kcal per gram).
+- If a remaining number is zero or negative, avoid adding more of it and mention it. If calories are already met, return an empty list or a small protein top-up and explain.
+- "summary": 1–2 short, encouraging sentences on how this plan closes the gap.${extra ? `\n\nThe user added: ${extra}` : ''}`;
+  }
+
+  function renderPlanLeft() {
+    const { left } = planNumbers();
+    const tile = (v, label, unit) => `<div><b${v < 0 ? ' style="color:var(--danger)"' : ''}>${fmt(Math.abs(v))}${unit}</b><span>${label} ${v < 0 ? 'over' : 'left'}</span></div>`;
+    $('#planLeft').innerHTML = tile(left.calories, 'cal', '') + tile(left.protein, 'protein', 'g') + tile(left.carbs, 'carbs', 'g') + tile(left.fat, 'fat', 'g');
+  }
+
+  function renderPlan(r) {
+    const items = (r.items || []).map(it => ({ name: it.name || '', amount: it.amount || '', cal: num(it.calories), p: num(it.protein_g), c: num(it.carbs_g), f: num(it.fat_g), yours: !!it.from_history }));
+    const t = items.reduce((a, i) => ({ cal: a.cal + i.cal, p: a.p + i.p, c: a.c + i.c, f: a.f + i.f }), { cal: 0, p: 0, c: 0, f: 0 });
+    const { left } = planNumbers(), pos = v => Math.max(0, v);
+    let h = r.summary ? `<div class="plan-summary">${esc(r.summary)}</div>` : '';
+    h += items.map(i => `<div class="plan-item"><div class="top"><b>${esc(i.name)}${i.yours ? '<span class="yours">★ YOURS</span>' : ''}</b><span>${fmt(i.cal)} cal</span></div>
+      <div class="sub">${esc(i.amount)} · <i class="dot" style="background:var(--protein)"></i>${r0(i.p)}g <i class="dot" style="background:var(--carbs)"></i>${r0(i.c)}g <i class="dot" style="background:var(--fat)"></i>${r0(i.f)}g</div></div>`).join('');
+    if (items.length) h += `<div class="plan-total"><span>Plan total</span><b>${fmt(t.cal)} cal · ${r0(t.p)}P · ${r0(t.c)}C · ${r0(t.f)}F</b></div>
+      <div class="plan-total"><span>You need</span><span>${fmt(pos(left.calories))} cal · ${r0(pos(left.protein))}P · ${r0(pos(left.carbs))}C · ${r0(pos(left.fat))}F</span></div>`;
+    $('#planBody').innerHTML = h || '<div class="empty">No suggestions came back. Tap Regenerate.</div>';
+  }
+
+  let planExtra = { prompt: '', note: '' }, planSeq = 0;
+  async function runPlan() {
+    const seq = ++planSeq;
+    renderPlanLeft();
+    $('#planBody').innerHTML = '<div class="loading"><div class="spinner"></div><span id="planStatus">Building your plan…</span></div>';
+    $('#planGo').disabled = true;
+    try {
+      const extra = [planExtra.prompt, planExtra.note].filter(Boolean).join(' ');
+      const r = await callAI([{ text: planPrompt(extra) }], { schema: PLAN_SCHEMA, onStatus: t => { const el = $('#planStatus'); if (el) el.textContent = t; } });
+      if (seq === planSeq) renderPlan(r);
+    } catch (err) {
+      if (seq === planSeq) $('#planBody').innerHTML = `<div class="error">${esc(err.message)}</div>`;
+    }
+    if (seq === planSeq) $('#planGo').disabled = false;
+  }
+
+  $('#planBtn').onclick = () => {
+    if (!settings.apiKey && !settings.claudeKey) { toast('Add your Gemini key in Settings first'); openSettings(); return; }
+    planExtra = { prompt: '', note: '' }; $('#planNote').value = '';
+    document.querySelectorAll('#planPrompts button').forEach(b => b.classList.remove('on'));
+    $('#planTitle').textContent = viewDate === dateKey(new Date()) ? 'Plan the rest of today' : `Plan for ${longDate(viewDate)}`;
+    openSheet($('#planSheet')); $('#planSheet .panel').scrollTop = 0;
+    runPlan();
+  };
+  $('#planPrompts').onclick = e => {
+    const b = e.target.closest('[data-prompt]'); if (!b) return;
+    const on = !b.classList.contains('on');
+    document.querySelectorAll('#planPrompts button').forEach(x => x.classList.toggle('on', on && x === b));
+    planExtra.prompt = on ? b.dataset.prompt : '';
+    runPlan();
+  };
+  $('#planGo').onclick = () => { planExtra.note = $('#planNote').value.trim(); runPlan(); };
+  $('#planSheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) planSeq++; });  // ignore a plan that arrives after closing
 
   // ---------- favorites ----------
   function renderFavorites() {
