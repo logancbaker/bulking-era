@@ -851,15 +851,19 @@ Rules for every case:
   // Free Gemini models are ranked by their success record. A request tries the best one, then the next best;
   // after two failed Google attempts it switches to Claude (paid backup) and stays on Claude for the rest of the day.
   const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
-  const CLAUDE_MODEL = 'claude-sonnet-5-5', CLAUDE_NAME = 'Claude Sonnet 5.5';
-  const CLAUDE_PRICE = { input: 2, output: 10 };  // USD per million tokens (Anthropic list price for Sonnet 5.5)
+  // Paid Claude models, tried in order when one is overloaded or rate-limited. Prices are USD per million tokens.
+  const CLAUDE_CHAIN = [
+    { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', effort: 'medium', price: { input: 2, output: 10 } },
+    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5', effort: 'medium', price: { input: 2, output: 10 } },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5', effort: null, price: { input: 1, output: 5 } },  // Haiku doesn't take an effort setting
+  ];
 
   // Running Claude spend on this phone, from the token counts Claude returns with every answer.
   let claudeUsage = store.get('ms.claudeUsage', null);
-  function recordClaudeUsage(u) {
+  function recordClaudeUsage(u, price) {
     if (!u) return;
     const inTok = (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0), outTok = u.output_tokens || 0;
-    const cost = (inTok * CLAUDE_PRICE.input + outTok * CLAUDE_PRICE.output) / 1e6;
+    const cost = (inTok * price.input + outTok * price.output) / 1e6;
     const month = dateKey(new Date()).slice(0, 7);
     claudeUsage = claudeUsage || { since: dateKey(new Date()), requests: 0, inputTokens: 0, outputTokens: 0, cost: 0, months: {} };
     claudeUsage.requests++; claudeUsage.inputTokens += inTok; claudeUsage.outputTokens += outTok; claudeUsage.cost += cost;
@@ -926,12 +930,13 @@ Rules for every case:
   const claudeSchemaFor = sc => claudeSchemas.get(sc) || claudeSchemas.set(sc, toJsonSchema(sc)).get(sc);
 
   // One Claude request (called straight from the phone; the key never leaves it except to Anthropic).
-  async function claudeOnce(parts, json, key = settings.claudeKey, schema = SCHEMA) {
+  async function claudeOnce(parts, json, key = settings.claudeKey, schema = SCHEMA, model = CLAUDE_CHAIN[0]) {
     const content = [];
     for (const p of parts) if (p.inline_data) content.push({ type: 'image', source: { type: 'base64', media_type: p.inline_data.mime_type, data: p.inline_data.data } });
     for (const p of parts) if (p.text) content.push({ type: 'text', text: p.text });
-    const body = { model: CLAUDE_MODEL, max_tokens: 8000, output_config: { effort: 'medium' }, messages: [{ role: 'user', content }] };
+    const body = { model: model.id, max_tokens: 8000, output_config: model.effort ? { effort: model.effort } : {}, messages: [{ role: 'user', content }] };
     if (json) body.output_config.format = { type: 'json_schema', schema: claudeSchemaFor(schema) };
+    if (!Object.keys(body.output_config).length) delete body.output_config;
     let res;
     try {
       res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -945,19 +950,36 @@ Rules for every case:
       const msg = j.error?.message || `Claude request failed (${res.status}).`;
       if (res.status === 401) throw new Error('Your Claude API key was rejected. Double-check it in Settings.');
       if (/credit balance/i.test(msg)) throw new Error('Your Claude account is out of credit. Add credit at console.anthropic.com.');
-      if (res.status === 429 || res.status === 529 || res.status >= 500) throw busyError('Claude is busy right now.');
+      if (res.status === 429 || res.status === 529 || res.status >= 500) {
+        const after = parseInt(res.headers.get('retry-after'), 10) || 0;
+        const why = res.status === 429 ? `hit your account's rate limit (429)${after ? ` — it says to wait ${after}s` : ''}. New API accounts start with low limits that rise as you use them`
+          : res.status === 529 ? 'is overloaded right now (529)' : `had a server error (${res.status})`;
+        throw Object.assign(busyError(`${model.name} ${why}.`), { status: res.status, retryAfter: after });
+      }
       throw new Error(msg);
     }
-    recordClaudeUsage(j.usage);  // billed whenever the request succeeded, even if the answer is unusable
+    recordClaudeUsage(j.usage, model.price);  // billed whenever the request succeeded, even if the answer is unusable
     if (j.stop_reason === 'refusal') throw new Error("Claude couldn't analyze that one. Try another photo or description.");
     const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
     if (!text || j.stop_reason === 'max_tokens') throw new Error("Claude didn't return a complete answer. Try again.");
     return json ? JSON.parse(text) : text;
   }
 
-  async function claudeWithRetry(parts, json, schema) {
-    try { return await claudeOnce(parts, json, settings.claudeKey, schema); }
-    catch (e) { if (!e.busy) throw e; await wait(1500); return claudeOnce(parts, json, settings.claudeKey, schema); }
+  // Tries each Claude model in turn (retrying once, after Claude's suggested wait) until one answers.
+  async function claudeWithFallback(parts, json, schema, onStatus = () => {}) {
+    let last;
+    for (const [i, m] of CLAUDE_CHAIN.entries()) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { return { value: await claudeOnce(parts, json, settings.claudeKey, schema, m), name: m.name }; }
+        catch (e) {
+          if (!e.busy) throw e;
+          last = e;
+          if (attempt === 0) { onStatus(`${m.name} is busy — retrying…`); await wait(Math.min(8000, Math.max(2000, e.retryAfter * 1000 || 0))); }
+        }
+      }
+      if (i < CLAUDE_CHAIN.length - 1) onStatus(`${m.name} is busy — trying ${CLAUDE_CHAIN[i + 1].name}…`);
+    }
+    throw busyError(`${last.message} Every Claude model was busy — wait a minute and try again.`);
   }
 
   async function callAI(parts, { json = true, onStatus = () => {}, schema = SCHEMA } = {}) {
@@ -969,12 +991,12 @@ Rules for every case:
     // "Claude only" setting: skip Google entirely.
     if (settings.claudeOnly) {
       if (!hasClaude) throw new Error('"Use Claude only" is on, but there\'s no Claude key. Add one in Settings or turn that off.');
-      return done(await claudeWithRetry(parts, json, schema), CLAUDE_NAME);
+      const r = await claudeWithFallback(parts, json, schema, onStatus); return done(r.value, r.name);
     }
 
     // Already switched to Claude today, or no Gemini key at all.
     if (hasClaude && (settings.claudeDay === today || !hasGemini)) {
-      try { return done(await claudeWithRetry(parts, json, schema), CLAUDE_NAME); }
+      try { const r = await claudeWithFallback(parts, json, schema, onStatus); return done(r.value, r.name); }
       catch (e) { if (!e.busy || !hasGemini) throw e; onStatus('Claude is busy — trying Google…'); }
     }
 
@@ -988,7 +1010,7 @@ Rules for every case:
       if (hasClaude && attempts >= 2 && settings.claudeDay !== today) {
         settings.claudeDay = today; saveSettings();   // stay on Claude until tomorrow
         onStatus('Google is busy — switching to Claude…');
-        try { return done(await claudeWithRetry(parts, json, schema), CLAUDE_NAME); }
+        try { const r = await claudeWithFallback(parts, json, schema, onStatus); return done(r.value, r.name); }
         catch (e) { if (!e.busy) throw e; onStatus('Claude is busy too — trying Google again…'); continue; }
       }
       onStatus('Google is busy — trying a backup…');
